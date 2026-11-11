@@ -19,9 +19,6 @@
 #include "plugin.h"
 #include "window_hook.h"
 
-#include <QDir>
-#include <QFile>
-#include <QFontDatabase>
 #include <QGuiApplication>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
@@ -63,42 +60,9 @@ bool systemDark()
     return status == ERROR_SUCCESS && value == 0;
 }
 
-// WinShun's UI font (src/app/UiFont.cpp): Alibaba PuHuiTi from the host's
-// fonts\, read as data when the path is outside the ANSI code page. Without it
-// the window falls back to the system font, which is what the user saw.
-void applyUiFont(const QString& appDir)
-{
-    if (appDir.isEmpty())
-        return;
-    const QString fontDir = appDir + u"/fonts/"_s;
-    bool ascii = true;
-    for (const QChar c : fontDir)
-        ascii = ascii && c.unicode() < 128;
-    QString family;
-    for (const QString& file : {u"AlibabaPuHuiTi-3-55-Regular.ttf"_s}) {
-        int id = -1;
-        if (ascii) {
-            id = QFontDatabase::addApplicationFont(fontDir + file);
-        } else {
-            QFile data(fontDir + file);
-            if (data.open(QIODevice::ReadOnly))
-                id = QFontDatabase::addApplicationFontFromData(data.readAll());
-        }
-        const QStringList families =
-            id < 0 ? QStringList{} : QFontDatabase::applicationFontFamilies(id);
-        if (family.isEmpty() && !families.isEmpty())
-            family = families.first();
-    }
-    if (family.isEmpty()) {
-        qWarning("tio: no UI font in %s, using the system font",
-            qUtf8Printable(QDir::toNativeSeparators(fontDir)));
-        return;
-    }
-    QFont font(family);
-    font.setHintingPreference(QFont::PreferVerticalHinting);
-    QGuiApplication::setFont(font);
-}
-
+// Use the Qt application's platform font. Registering a private application
+// font here has crashed on some hosts inside QFontDatabase::addApplicationFont;
+// QML controls and DetailLine therefore share this same platform font.
 void prepareGui()
 {
     const QString appDir = appDirectory();
@@ -112,12 +76,9 @@ void prepareGui()
     QQuickStyle::setStyle(u"Basic"_s);
 }
 
-// After QGuiApplication exists, never before: QFontDatabase has no platform
-// backend until then and addApplicationFont dereferences it.
 void startGui()
 {
     qunsetenv("QT_QPA_PLATFORM");
-    applyUiFont(appDirectory());
     setPluginWindowIcon();
 }
 
