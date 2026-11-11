@@ -132,11 +132,11 @@ button:disabled{opacity:.45;cursor:not-allowed}
   background:var(--card);border:1px solid var(--border);border-radius:var(--r-ctl);
   padding:4px;display:none;box-shadow:var(--shadow)}
 .combo.open .list{display:block}
-.combo [role="option"]{padding:6px 10px;border-radius:var(--r-small);cursor:pointer}
+.combo [role="option"]{padding:9px 12px;border-radius:var(--r-small);cursor:pointer;min-height:44px}
 .combo [role="option"]:hover{background:var(--hover)}
 .combo [role="option"].cur{background:var(--sunken)}
-.combo [role="option"] .n{display:block;font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.combo [role="option"] .s{display:block;font-size:10.5px;color:var(--subtext);
+.combo [role="option"] .n{display:block;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:2px}
+.combo [role="option"] .s{display:block;font-size:11px;color:var(--subtext);
   font-family:var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
 /* device details fold card */
@@ -339,16 +339,22 @@ a.src:hover{border-bottom-style:solid}
         <span class="tag ok" data-i18n="bkOk">可用</span></div>
     </section>
 
-    <!-- 包完整性：第三方文件与来源，全部可查 -->
+    <!-- 包完整性：状态在卡内，三方文件与来源是卡内的展开区，链接可查 -->
     <section class="card">
-      <div class="head"><h2 data-i18n="groupPackage">包完整性</h2>
-        <span class="chip">0.1.0 · tio 3.9-3</span></div>
-      <span class="hint ok-text" data-i18n="pkgOk">有效 · 每个文件都与清单一致</span>
-      <span class="hint" data-i18n="pkgIntro">包里带的是上游 tio 与它真正导入的 MSYS2 运行时；每行给出来源、许可证和原文，点开可查。</span>
-      <div class="pkglist" id="pkglist"></div>
-      <div class="row" style="justify-content:flex-end">
-        <a class="pkglink" href="https://github.com/ra9fael/winshun-tio/blob/main/THIRD_PARTY.md" target="_blank" rel="noopener" data-i18n="tpDoc">完整第三方说明</a>
-        <a class="pkglink" href="https://github.com/ra9fael/winshun-tio/blob/main/manifest/files.json" target="_blank" rel="noopener" data-i18n="manifestLink">逐文件清单 manifest</a>
+      <div class="head fold" id="pkg-head" role="button" tabindex="0" aria-expanded="false">
+        <span class="chev" id="pkg-chev" aria-hidden="true">▸</span>
+        <h2 data-i18n="groupPackage">包完整性</h2>
+        <span class="note"><span data-i18n="pkgOk">有效 · 每个文件都与清单一致</span>
+          <span id="pkg-time"></span></span>
+      </div>
+      <span class="hint" id="pkg-summary" data-i18n="pkgSummary">0.1.0 · tio 3.9-3 · 8 个运行时文件 · 6.6 MB —— 展开</span>
+      <div class="details" id="pkg-details">
+        <span class="hint" data-i18n="pkgIntro">包里带的是上游 tio 与它真正导入的 MSYS2 运行时；每行给出来源、许可证和原文，点开可查。</span>
+        <div class="pkglist" id="pkglist"></div>
+        <div class="row" style="justify-content:flex-end">
+          <a class="pkglink" href="https://github.com/ra9fael/winshun-tio/blob/main/THIRD_PARTY.md" target="_blank" rel="noopener" data-i18n="tpDoc">完整第三方说明</a>
+          <a class="pkglink" href="https://github.com/ra9fael/winshun-tio/blob/main/manifest/files.json" target="_blank" rel="noopener" data-i18n="manifestLink">逐文件清单 manifest</a>
+        </div>
       </div>
     </section>
 
@@ -397,6 +403,7 @@ const I18N = {
     baud:"波特率", dataBits:"数据位", parity:"校验", stopBits:"停止位", flow:"流控",
     flowHint:"hard 时 RTS 由流控管理，不承诺固定电平",
     groupCapture:"会话捕获", capOff:"未捕获", capOn:"捕获中", capStart:"开始捕获",
+    capture:"捕获",
     capStop:"停止捕获", permText:"捕获会读取串口收发的全部字节，并保留在本机。这打破了插件「不读取串口内容」的默认边界：需要新的 serial:read 权限，且只对这一个会话生效，可随时关闭。",
     permAllow:"允许本会话捕获", permDeny:"暂不", copyAll:"复制全部",
     saveText:"另存为文本", saveScript:"导出重放脚本", clear:"清屏",
@@ -407,6 +414,7 @@ const I18N = {
     kLocation:"位置", kInstance:"实例 ID", kStatus:"设备状态", okState:"正常",
     groupBackend:"终端后端", bkOk:"可用", bkOwned:"tio 是我们创建的子进程：停止可靠",
     groupPackage:"包完整性", pkgOk:"有效 · 每个文件都与清单一致",
+    pkgSummary:"0.1.0 · tio 3.9-3 · 8 个运行时文件 · 6.6 MB —— 展开看三方文件与来源",
     pkgIntro:"包里带的是上游 tio 与它真正导入的 MSYS2 运行时；每行给出来源、许可证和原文，点开可查。",
     tpDoc:"完整第三方说明", manifestLink:"逐文件清单 manifest",
     licText:"许可证原文", srcText:"来源", notBundled:"不随包",
@@ -434,6 +442,7 @@ const I18N = {
     baud:"Baud rate", dataBits:"Data bits", parity:"Parity", stopBits:"Stop bits", flow:"Flow control",
     flowHint:"with hard flow the RTS follows the flow, not a fixed level",
     groupCapture:"Session capture", capOff:"not capturing", capOn:"capturing", capStart:"Start capture",
+    capture:"Capture",
     capStop:"Stop capture", permText:"Capture reads every byte the session sends and receives, kept on this machine. It breaks the plugin's default \"serial content is never read\" boundary: a new serial:read permission is required, it applies to this session only, and it can be turned off at any time.",
     permAllow:"Allow capture for this session", permDeny:"Not now", copyAll:"Copy all",
     saveText:"Save as text", saveScript:"Export replay script", clear:"Clear",
@@ -444,6 +453,7 @@ const I18N = {
     kLocation:"Location", kInstance:"Instance id", kStatus:"Device status", okState:"no problem reported",
     groupBackend:"Terminal backend", bkOk:"available", bkOwned:"tio is the child process we create: Stop is reliable",
     groupPackage:"Package integrity", pkgOk:"valid · every file matches the manifest",
+    pkgSummary:"0.1.0 · tio 3.9-3 · 8 runtime files · 6.6 MB — unfold for third-party files and sources",
     pkgIntro:"The package ships upstream tio plus the MSYS2 runtime it really imports; each row links its source, licence and licence text for verification.",
     tpDoc:"Full third-party notes", manifestLink:"per-file manifest",
     licText:"licence text", srcText:"source", notBundled:"not bundled",
@@ -511,7 +521,7 @@ function renderTabs(){
     </button>`;
   }).join("") +
   `<span class="plusmenu" id="plusmenu">
-     <button class="tabbtn" id="tab-plus" data-i18n="newSession" aria-haspopup="true"
+     <button class="tabbtn" id="tab-plus" aria-haspopup="true"
        aria-expanded="false" title="${esc(t("plusTitle"))}">＋</button>
      <div class="pluspanel" id="pluspanel">
        <div class="title">${esc(t("plusTitle"))}</div>
@@ -729,6 +739,77 @@ $("details-head").onkeydown = e => {
   if (e.key === "Enter" || e.key === " "){ e.preventDefault(); setDetailsOpen(!detailsOpen); }
 };
 
+/* ---- package integrity: the third-party record lives IN the card ----
+   数据与仓库里 THIRD_PARTY.md 一一对应；链接指向可核验的原文。 */
+const REPO = "https://github.com/ra9fael/winshun-tio";
+const MSYS2 = "https://repo.msys2.org/msys/x86_64/";
+const THIRD_PARTY = [
+  { name:"tio", ver:"3.9-3", license:"GPL-2.0-or-later",
+    lic:[["licenses/tio.txt", REPO+"/blob/main/licenses/tio.txt"]],
+    src:["repo.msys2.org · tio-3.9-3-x86_64.pkg.tar.zst",
+         "https://repo.msys2.org/msys/x86_64/tio-3.9-3-x86_64.pkg.tar.zst"],
+    also:[["github.com/tio/tio (上游源码)", "https://github.com/tio/tio"]],
+    why:"whyTio" },
+  { name:"msys-2.0.dll", ver:"MSYS2 runtime", license:"GPL + Cygwin",
+    lic:[["msys2-runtime-COPYING", REPO+"/blob/main/licenses/msys2-runtime-COPYING"],
+         ["CYGWIN_LICENSE", REPO+"/blob/main/licenses/msys2-runtime-CYGWIN_LICENSE"]],
+    src:["repo.msys2.org · msys/x86_64/", MSYS2], why:"whyRuntime" },
+  { name:"msys-glib-2.0-0.dll · msys-iconv-2.dll · msys-pcre2-8-0.dll · msys-lua-5.5.dll · msys-intl-8.dll",
+    ver:"LGPL-2.1-or-later（随 MSYS2 分发）", license:"LGPL-2.1-or-later",
+    lic:[["msys2-runtime-COPYING", REPO+"/blob/main/licenses/msys2-runtime-COPYING"]],
+    src:["repo.msys2.org · msys/x86_64/", MSYS2], why:"whyGlib" },
+  { name:"msys-gcc_s-seh-1.dll", ver:"gcc-libs", license:"GPL-3+ · Runtime exception",
+    lic:[["gcc-libs-COPYING3", REPO+"/blob/main/licenses/gcc-libs-COPYING3"],
+         ["COPYING.LIB", REPO+"/blob/main/licenses/gcc-libs-COPYING.LIB"],
+         ["RUNTIME.LIBRARY.EXCEPTION", REPO+"/blob/main/licenses/gcc-libs-RUNTIME.LIBRARY.EXCEPTION"]],
+    src:["repo.msys2.org · msys/x86_64/", MSYS2], why:"whyGcc" },
+  { name:"tio.exe (引导器) · TioApp.dll (窗口)", ver:"0.1.0", license:"MIT",
+    lic:[["LICENSE", REPO+"/blob/main/LICENSE"]],
+    src:["github.com/ra9fael/winshun-tio", REPO], why:"whySelf" },
+  { name:"Windows Terminal", ver:"机器已装为准", license:"MIT",
+    lic:[["github.com/microsoft/terminal", "https://github.com/microsoft/terminal"]],
+    src:["github.com/microsoft/terminal", "https://github.com/microsoft/terminal"],
+    why:"whyWt", notBundled:true },
+  { name:"Qt 6.12 (Core/Gui/Qml/Quick/QuickControls2)", ver:"6.12.0", license:"LGPL-3.0",
+    lic:[["gnu.org · LGPL-3.0", "https://www.gnu.org/licenses/lgpl-3.0.html"]],
+    src:["download.qt.io", "https://download.qt.io/official_releases/qt/"],
+    why:"whyQt", notBundled:true },
+  { name:"Phosphor 字体（图标字形）", ver:"—", license:"MIT",
+    lic:[["icons/PHOSPHOR-LICENSE", REPO+"/blob/main/icons/PHOSPHOR-LICENSE"]],
+    src:["github.com/ra9fael/winshun-plugin-icons", "https://github.com/ra9fael/winshun-plugin-icons"],
+    why:"whyPhos", notBundled:true }
+];
+
+function renderPkg(){
+  $("pkg-time").textContent = clock();
+  $("pkglist").innerHTML = THIRD_PARTY.map(row => {
+    const lics = row.lic.map(([label, href]) =>
+      `<a class="lic" href="${href}" target="_blank" rel="noopener">${esc(label)}</a>`).join("");
+    const also = (row.also ?? []).map(([label, href]) =>
+      `<a class="src" href="${href}" target="_blank" rel="noopener">${esc(label)}</a>`).join(" · ");
+    return `<div class="pkgrow">
+      <span class="n">${esc(row.name)} <span class="v">${esc(row.ver)}</span></span>
+      <span>${esc(t("srcText"))}: <a class="src" href="${row.src[1]}" target="_blank" rel="noopener">${esc(row.src[0])}</a>
+        ${also ? " · " + also : ""}</span>
+      <span class="lics">${lics}</span>
+      <span class="why">${esc(t(row.why))}</span>
+      ${row.notBundled ? `<span class="tag nb">${esc(t("notBundled"))}</span>` : ""}
+    </div>`;
+  }).join("");
+}
+
+/* ---- package fold ---- */
+function setPkgOpen(open){
+  $("pkg-details").classList.toggle("open", open);
+  $("pkg-chev").textContent = open ? "▾" : "▸";
+  $("pkg-head").setAttribute("aria-expanded", String(open));
+}
+$("pkg-head").onclick = () => setPkgOpen(!$("pkg-details").classList.contains("open"));
+$("pkg-head").onkeydown = e => {
+  if (e.key === "Enter" || e.key === " "){ e.preventDefault();
+    setPkgOpen(!$("pkg-details").classList.contains("open")); }
+};
+
 /* ---- session card: state + the buttons live in its header ---- */
 function renderSessionCard(){
   const s = active(), p = portOf(s);
@@ -813,6 +894,7 @@ function toast(msg){
 
 applyLangToStatic();
 setDetailsOpen(false);
+renderPkg();
 renderAll();
 </script>
 </body>

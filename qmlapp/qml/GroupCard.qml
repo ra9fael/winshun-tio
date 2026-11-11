@@ -39,10 +39,23 @@ Rectangle {
         // The header is wrapped in an Item so the click area can sit over the
         // whole row: a MouseArea as a ColumnLayout sibling would be another
         // row below the title, and a click on the title would never reach it.
+        // The MouseArea is declared FIRST, under the content: a header button
+        // (headerExtra) must win the click, while the labels — which grab no
+        // mouse events — let the fold click fall through to it.
         Item {
             id: headerArea
             Layout.fillWidth: true
             implicitHeight: header.implicitHeight
+
+            MouseArea {
+                anchors.fill: parent
+                enabled: card.collapsible
+                cursorShape: card.collapsible ? Qt.PointingHandCursor : Qt.ArrowCursor
+                onClicked: {
+                    card.collapsed = !card.collapsed
+                    card.toggled(card.collapsed)
+                }
+            }
 
             RowLayout {
                 id: header
@@ -74,16 +87,6 @@ Rectangle {
                 RowLayout {
                     id: headerExtraHost
                     spacing: 8
-                }
-            }
-
-            MouseArea {
-                anchors.fill: parent
-                enabled: card.collapsible
-                cursorShape: card.collapsible ? Qt.PointingHandCursor : Qt.ArrowCursor
-                onClicked: {
-                    card.collapsed = !card.collapsed
-                    card.toggled(card.collapsed)
                 }
             }
         }
