@@ -78,6 +78,10 @@ class TioWindow : public QObject {
     Q_PROPERTY(QString sessionPid READ sessionPid NOTIFY changed)
     Q_PROPERTY(QString sessionToken READ sessionToken NOTIFY changed)
 
+    // The session tabs: one entry per tab, in tab order. Each names its port,
+    // its friendly name, its phase and whether the window is drawing it.
+    Q_PROPERTY(QVariantList sessions READ sessions NOTIFY changed)
+
 public:
     explicit TioWindow(QObject* parent = nullptr);
     ~TioWindow() override;
@@ -131,6 +135,21 @@ public:
     QString sessionPortState() const;
     QString sessionPid() const;
     QString sessionToken() const;
+    QVariantList sessions() const;
+
+    // ---- session tabs ----
+    // The window is session-oriented: every tab binds one port to at most one
+    // process, and the cards below draw the focused tab.
+    Q_INVOKABLE void focusSession(int index);
+    // Creates a tab for a port no other tab holds, seeded with the default
+    // configuration. Returns false with a notice when the port is taken.
+    Q_INVOKABLE bool newSession(int com);
+    // Duplicates a tab's parameters into a new tab for the same port; refused
+    // while the port is held, since one port carries one process.
+    Q_INVOKABLE bool cloneSession(int index);
+    // Refused while the tab's session runs: the tab is the only handle to it.
+    Q_INVOKABLE bool closeSession(int index);
+    Q_INVOKABLE void restart();
 
     // ---- editing ----
     Q_INVOKABLE void selectPort(int com);
@@ -141,6 +160,9 @@ public:
     Q_INVOKABLE void setFlow(const QString& flow);
     Q_INVOKABLE void setBackend(const QString& id);
     Q_INVOKABLE void refresh();
+    // Opens a document that ships in the package folder ("THIRD_PARTY.md",
+    // "manifest/files.json"): the integrity card's verifiable links.
+    Q_INVOKABLE void openPackageDoc(const QString& name);
 
     // ---- card folding (TIO-008) ----
     Q_INVOKABLE bool cardCollapsed(const QString& id, bool fallback = false) const;
@@ -167,6 +189,8 @@ private:
     void recomputeDirty();
     // Runs a form edit: adopts it, marks the form dirty, repaints.
     void edit(const std::function<void(Form&)>& change);
+    // The focused tab's form: what the cards below draw.
+    Form focusedForm() const;
 
     Form m_form;          // the window's copy while editing
     bool m_dirty = false;

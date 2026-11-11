@@ -33,6 +33,7 @@ enum class Browse { None, Ports, Baudrates, Backends, Diagnostics };
 struct Lang {
     bool zh = true;
     const char* groupLaunch = "启动";
+    const char* groupSessions = "会话（Enter 停止）";
     const char* groupParameters = "参数（Enter 修改，就地生效）";
     const char* groupInformation = "信息";
     const char* stop = "停止";

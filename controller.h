@@ -26,16 +26,6 @@
 
 namespace tioplug {
 
-// What the user has entered. This is the unit that is saved, launched, and
-// handed between the search box and the window.
-struct Form {
-    std::wstring port;
-    Serial serial;
-    Backend backend = Backend::None;
-
-    Port parsed() const { return parsePort(winshun::utf8(port)); }
-};
-
 // Everything a view draws lives in snapshot.h; the controller fills one in.
 class Controller {
 public:
@@ -75,9 +65,9 @@ public:
     }
 
     // Re-probes backends, re-verifies the package, re-enumerates ports and
-    // re-reads the device identity. Also notices a session whose process left
-    // on its own (the user closed the terminal, or tio exited): without this
-    // the window would keep saying "running" forever.
+    // re-reads the focused tab's identity. Also notices sessions whose process
+    // left on its own (the user closed the terminal, or tio exited): without
+    // this the window would keep saying "running" forever.
     void refresh()
     {
         Notify notify;
@@ -87,8 +77,9 @@ public:
             m_package = verifyPackage(m_pluginDir);
             m_packageVersion = m_package.packageVersion;
             m_ports = enumeratePorts();
-            reconcileSessionLocked();
+            reconcileSessionsLocked();
             applySettingsLocked();
+            ensureTabLocked();
             refreshIdentityLocked();
             notify = m_notify;
         }
@@ -97,16 +88,82 @@ public:
     }
 
 private:
-    // Marks a running session exited when its process is gone. The creation
+    // One session tab: a form bound to at most one process. Two tabs never
+    // hold the same port — the port is exclusive from the moment a tab picks
+    // it, so a session can never collide with another one's device.
+    struct SessionTab {
+        Form form;
+        Session session;
+    };
+
+    // Marks running sessions exited when their processes are gone. The creation
     // time is the identity, so a reused PID is never mistaken for ours.
-    void reconcileSessionLocked()
+    void reconcileSessionsLocked()
     {
-        if (m_session.phase != Phase::Running || m_session.pid == 0)
-            return;
-        if (processAlive(m_session.pid, m_session.created))
-            return;
-        markExited(m_session);
-        m_token.clear();
+        for (SessionTab& tab : m_tabs) {
+            if (tab.session.phase != Phase::Running || tab.session.pid == 0)
+                continue;
+            if (processAlive(tab.session.pid, tab.session.created))
+                continue;
+            markExited(tab.session);
+        }
+    }
+
+    // The window always has something to draw: the first tab is seeded from the
+    // default configuration, and it never goes away by itself.
+    void ensureTabLocked()
+    {
+        if (m_tabs.empty()) {
+            m_tabs.push_back({m_form, Session{}});
+            m_activeTab = 0;
+        }
+        m_activeTab = std::min(m_activeTab, m_tabs.size() - 1);
+    }
+
+    SessionTab& activeTabLocked()
+    {
+        ensureTabLocked();
+        return m_tabs[m_activeTab];
+    }
+
+    // The tab holding this port, if any. One port, one tab, ever.
+    SessionTab* tabForPortLocked(int com)
+    {
+        for (SessionTab& tab : m_tabs)
+            if (tab.form.parsed().com == com)
+                return &tab;
+        return nullptr;
+    }
+
+    // Whether another tab (not `except`) already holds this port.
+    bool portHeldLocked(int com, const SessionTab* except) const
+    {
+        for (const SessionTab& tab : m_tabs)
+            if (&tab != except && tab.form.parsed().com == com)
+                return true;
+        return false;
+    }
+
+    // Const overloads for the read paths (snapshot, diagnostics): a snapshot
+    // must be able to guarantee a tab exists without mutating through a const
+    // this.
+    void ensureTabLocked() const
+    {
+        const_cast<Controller*>(this)->ensureTabLocked();
+    }
+
+    const SessionTab& activeTabLocked() const
+    {
+        ensureTabLocked();
+        return m_tabs[m_activeTab];
+    }
+
+    const SessionTab* tabForPortLocked(int com) const
+    {
+        for (const SessionTab& tab : m_tabs)
+            if (tab.form.parsed().com == com)
+                return &tab;
+        return nullptr;
     }
 
 public:
@@ -119,7 +176,6 @@ public:
         out.serial = m_form.serial;
         out.backend = m_form.backend;
         out.backends = m_backends;
-        out.session = m_session;
         out.package = m_package;
         out.ports = m_ports;
         out.identity = m_identity;
@@ -128,8 +184,20 @@ public:
         out.identityDetails = m_identityDetails;
         out.identityValid = m_identityValid;
         out.packageVersion = m_packageVersion;
-        out.token = m_token;
-        out.readiness = readinessLocked();
+        ensureTabLocked();
+        for (std::size_t i = 0; i < m_tabs.size(); ++i) {
+            SessionView view;
+            view.session = m_tabs[i].session;
+            view.form = m_tabs[i].form;
+            view.focused = i == m_activeTab;
+            out.sessions.push_back(std::move(view));
+        }
+        // The focused tab's gates drive the window's Launch button; the default
+        // form's gates drive the search box's launch row. The Session gate is
+        // per target: one tab holding the port blocks launching THAT port, not
+        // the others.
+        out.readiness = readinessLocked(m_tabs[m_activeTab]);
+        out.defaultReadiness = defaultReadinessLocked();
         out.error = m_error;
         out.diagnostic = diagnosticsLocked();
         return out;
@@ -171,99 +239,128 @@ public:
 
     // Adopts the form without writing it. Used by the search box, where each
     // parameter change is a separate action but a settings write per keystroke
-    // would be wasteful; the caller decides when to persist. The device
-    // identity follows the port: picking another port re-reads what that device
-    // says at once, so the view never names one port with another's identity.
+    // would be wasteful; the caller decides when to persist. This edits the
+    // default configuration only — tabs are bound when created or launched, and
+    // a running session keeps the parameters it started with.
     void adopt(const Form& form)
     {
         Notify notify;
         {
             const std::lock_guard lock(m_mutex);
-            const Port before = m_form.parsed();
             adoptLocked(form);
             writeSettingsLocked();
-            if (portChangedLocked(before))
-                refreshIdentityLocked();
             notify = m_notify;
         }
         if (notify)
             notify();
     }
 
-    // Adopts the form in memory only — no settings write. The window edits a
-    // copy and saves explicitly; picking a port there must still re-read the
-    // identity (capture is automatic, never a button the user must find), so
-    // the preview adopts and recaptures without persisting. The saved form is
-    // untouched, so the window's dirty marker keeps meaning "not saved yet".
-    void preview(const Form& form)
+    // Adopts the form in memory into the focused tab — no settings write. The
+    // window edits a copy and saves explicitly; picking a port there must
+    // still re-read the identity (capture is automatic, never a button the
+    // user must find), so the preview adopts and recaptures without
+    // persisting. The saved form is untouched, so the window's dirty marker
+    // keeps meaning "not saved yet". Returns false with the neutral code in
+    // `error` when another tab already holds the port.
+    bool preview(const Form& form, std::string& error)
     {
+        error.clear();
         Notify notify;
+        bool ok = true;
         {
             const std::lock_guard lock(m_mutex);
-            const Port before = m_form.parsed();
-            adoptLocked(form);
-            if (portChangedLocked(before))
-                refreshIdentityLocked();
+            SessionTab& tab = activeTabLocked();
+            const Port target = form.parsed();
+            if (portHeldLocked(target.com, &tab)) {
+                error = "the port is held by another session";
+                ok = false;
+            } else {
+                const Port before = tab.form.parsed();
+                tab.form = form;
+                resolveBackendLocked(tab.form);
+                if (target.com != before.com)
+                    refreshIdentityLocked();
+            }
             notify = m_notify;
         }
         if (notify)
             notify();
+        return ok;
     }
 
-    // Starts tio. `error` is UTF-8 and already neutral ("wt started no tio
-    // process"), never a localized sentence: callers localize.
+    // Starts tio for the port the form names, as its own session tab. A tab
+    // already bound to the port is reused (its parameters updated while idle);
+    // no other tab may hold the port. `error` is UTF-8 and already neutral
+    // ("wt started no tio process"), never a localized sentence: callers
+    // localize.
     bool launch(const Form& form, std::string& error)
     {
         error.clear();
         Plan plan;
         LaunchContext context;
         Notify notify;
+        SessionTab* tab = nullptr;
 
-        // Phase 1: adopt, check, plan. All under the lock.
+        // Phase 1: bind a tab, check, plan. All under the lock.
         {
             const std::lock_guard lock(m_mutex);
-            adoptLocked(form);
-            // The configuration the launch uses is the one that persists: what
-            // started and what the next query shows must not differ.
-            writeSettingsLocked();
-            refreshIdentityLocked();
-
-            if (!readinessLocked().ready()) {
-                error = "a pre-launch check did not pass";
-                m_error = L"";
-                notify = m_notify;
-            } else if (!beginValidation(m_session)) {
-                error = "a session is already active";
+            const Port target = form.parsed();
+            tab = tabForPortLocked(target.com);
+            if (portHeldLocked(target.com, tab)) {
+                error = "the port is held by another session";
                 m_error = L"";
                 notify = m_notify;
             } else {
-                m_token = newToken();
-                const Port port = m_form.parsed();
-                m_session.com = port.com;
-                m_session.device = port.device();
-                m_session.token = m_token;
+                if (!tab) {
+                    m_tabs.push_back({form, Session{}});
+                    tab = &m_tabs.back();
+                }
+                m_activeTab = static_cast<std::size_t>(tab - m_tabs.data());
+                if (tab->session.phase == Phase::Configuring
+                    || tab->session.phase == Phase::Exited
+                    || tab->session.phase == Phase::Failed
+                    || tab->session.phase == Phase::Removed)
+                    tab->form = form; // idle: the tab takes the form's parameters
+                resolveBackendLocked(tab->form);
+                // The configuration the launch uses is the one that persists:
+                // what started and what the next query shows must not differ.
+                m_form = tab->form;
+                writeSettingsLocked();
+                refreshIdentityLocked();
 
-                const std::wstring wtPath = findOnPath(L"wt.exe");
-                const std::wstring tioPath = m_runtimeDir + L"\\tio.exe";
-                plan = planLaunch(m_form.backend,
-                    wtPath.empty() ? std::string() : winshun::utf8(wtPath),
-                    winshun::utf8(tioPath), port, m_form.serial, m_token);
-
-                if (plan.error != PlanError::None) {
-                    markFailed(m_session, PortState::Unknown);
-                    error = plan.error == PlanError::PackagePath
-                        ? "the plugin path holds a character Windows Terminal treats as a separator"
-                        : "the launch arguments are invalid";
-                    m_token.clear();
-                } else if (plan.backend == Backend::None) {
-                    markFailed(m_session, PortState::Unknown);
-                    error = "no usable backend";
-                    m_token.clear();
+                if (!readinessLocked(*tab).ready()) {
+                    error = "a pre-launch check did not pass";
+                    m_error = L"";
+                } else if (!beginValidation(tab->session)) {
+                    error = "a session is already active";
+                    m_error = L"";
                 } else {
-                    context.pluginDir = m_pluginDir;
-                    context.runtimeDir = m_runtimeDir;
-                    context.workDir = winshun::wide(m_dataDir);
-                    beginStart(m_session);
+                    const std::string token = newToken();
+                    const Port port = tab->form.parsed();
+                    tab->session.com = port.com;
+                    tab->session.device = port.device();
+                    tab->session.token = token;
+
+                    const std::wstring wtPath = findOnPath(L"wt.exe");
+                    const std::wstring tioPath = m_runtimeDir + L"\\tio.exe";
+                    plan = planLaunch(tab->form.backend,
+                        wtPath.empty() ? std::string() : winshun::utf8(wtPath),
+                        winshun::utf8(tioPath), port, tab->form.serial, token);
+
+                    if (plan.error != PlanError::None) {
+                        markFailed(tab->session, PortState::Unknown);
+                        error = plan.error == PlanError::PackagePath
+                            ? "the plugin path holds a character Windows Terminal treats as a separator"
+                            : "the launch arguments are invalid";
+                    } else if (plan.backend == Backend::None) {
+                        markFailed(tab->session, PortState::Unknown);
+                        error = "no usable backend";
+                    } else {
+                        context.pluginDir = m_pluginDir;
+                        context.runtimeDir = m_runtimeDir;
+                        context.workDir = winshun::wide(m_dataDir);
+                        beginStart(tab->session);
+                    }
                 }
                 notify = m_notify;
             }
@@ -282,11 +379,10 @@ public:
         {
             const std::lock_guard lock(m_mutex);
             if (!result.ok) {
-                markFailed(m_session, PortState::Unknown);
+                markFailed(tab->session, PortState::Unknown);
                 error = result.error;
-                m_token.clear();
             } else {
-                markRunning(m_session, result.pid, result.created);
+                markRunning(tab->session, result.pid, result.created);
                 started = true;
             }
             // The last error, so the window can show it: a failed launch has to
@@ -299,40 +395,142 @@ public:
         return started;
     }
 
-    void stop(bool hostShutdown)
+    // Stops sessions. The window stops the focused tab; the search box stops
+    // whichever session runs the port its row shows; host shutdown stops every
+    // owned process, because an orphan would keep the serial port after the
+    // launcher disappeared. `hostShutdown` only shortens the graceful timeout.
+    void stopActive() { stopMatching([this](const SessionTab&, std::size_t index) {
+        return index == m_activeTab; }); }
+    void stopPort(int com) { stopMatching([com](const SessionTab& tab, std::size_t) {
+        return tab.form.parsed().com == com; }); }
+    void stopAll(bool hostShutdown) { stopMatching([](const SessionTab&, std::size_t) {
+        return true; }, hostShutdown); }
+
+private:
+    template <typename Keep>
+    void stopMatching(Keep keep, bool hostShutdown = false)
     {
-        Notify notify;
-        DWORD pid = 0;
-        unsigned long long created = 0;
-        bool active = false;
+        std::vector<std::pair<DWORD, unsigned long long>> victims;
+        std::vector<std::size_t> indices;
         {
             const std::lock_guard lock(m_mutex);
-            active = m_session.active();
-            if (active) {
-                beginStop(m_session);
-                pid = m_session.pid;
-                created = m_session.created;
-                notify = m_notify;
+            ensureTabLocked();
+            for (std::size_t i = 0; i < m_tabs.size(); ++i) {
+                SessionTab& tab = m_tabs[i];
+                if (!keep(tab, i) || !tab.session.active() || !beginStop(tab.session))
+                    continue;
+                victims.emplace_back(tab.session.pid, tab.session.created);
+                indices.push_back(i);
             }
         }
-        if (notify)
-            notify();
-        if (!active)
+        if (victims.empty())
             return;
-
         // Terminating can wait for the graceful timeout, so it runs unlocked.
-        if (pid != 0)
-            stopOwned(pid, created, hostShutdown ? 1200 : 2000);
-
+        for (const auto& [pid, created] : victims)
+            if (pid != 0)
+                stopOwned(pid, created, hostShutdown ? 1200 : 2000);
+        Notify notify;
         {
             const std::lock_guard lock(m_mutex);
-            markExited(m_session);
-            m_token.clear();
+            for (const std::size_t index : indices)
+                if (index < m_tabs.size()) {
+                    markExited(m_tabs[index].session);
+                    m_tabs[index].session.token.clear();
+                }
             notify = m_notify;
         }
         if (notify)
             notify();
     }
+
+public:
+
+    // A new tab, seeded with the given form. The port must be free; the tab
+    // starts idle, so the launch gates decide when it may start.
+    bool createSession(const Form& seed, std::string& error)
+    {
+        error.clear();
+        Notify notify;
+        {
+            const std::lock_guard lock(m_mutex);
+            const Port target = seed.parsed();
+            if (portHeldLocked(target.com, nullptr)) {
+                error = "the port is held by another session";
+                m_error = winshun::wide(error);
+            } else {
+                m_tabs.push_back({seed, Session{}});
+                m_activeTab = m_tabs.size() - 1;
+                refreshIdentityLocked();
+                m_error = L"";
+            }
+            notify = m_notify;
+        }
+        if (notify)
+            notify();
+        return error.empty();
+    }
+
+    bool cloneSession(std::size_t index, std::string& error)
+    {
+        Form seed;
+        {
+            const std::lock_guard lock(m_mutex);
+            if (index >= m_tabs.size())
+                return false;
+            seed = m_tabs[index].form;
+        }
+        return createSession(seed, error);
+    }
+
+    // Closes a tab. A session that still owns a process refuses: the tab is
+    // the only handle to it, and dropping it would orphan the terminal.
+    bool closeSession(std::size_t index, std::string& error)
+    {
+        error.clear();
+        Notify notify;
+        bool closed = false;
+        {
+            const std::lock_guard lock(m_mutex);
+            if (index >= m_tabs.size()) {
+                error = "no session to stop";
+            } else if (m_tabs[index].session.active()
+                || m_tabs[index].session.phase == Phase::Validating) {
+                error = "the session must be stopped before it is closed";
+                m_error = winshun::wide(error);
+            } else {
+                m_tabs.erase(m_tabs.begin() + static_cast<std::ptrdiff_t>(index));
+                if (m_activeTab >= m_tabs.size())
+                    m_activeTab = m_tabs.empty() ? 0 : m_tabs.size() - 1;
+                ensureTabLocked();
+                refreshIdentityLocked();
+                closed = true;
+                m_error = L"";
+            }
+            notify = m_notify;
+        }
+        if (notify)
+            notify();
+        return closed;
+    }
+
+    // Switches the tab the window draws, and re-reads the identity for its
+    // port: each tab names its own device, never another's.
+    void focusSession(std::size_t index)
+    {
+        Notify notify;
+        {
+            const std::lock_guard lock(m_mutex);
+            if (index < m_tabs.size() && index != m_activeTab) {
+                m_activeTab = index;
+                refreshIdentityLocked();
+            }
+            notify = m_notify;
+        }
+        if (notify)
+            notify();
+    }
+
+public:
 
     std::string diagnostics() const
     {
@@ -340,10 +538,20 @@ public:
         return diagnosticsLocked();
     }
 
+public:
+
     bool configured() const
     {
         const std::lock_guard lock(m_mutex);
         return m_configured;
+    }
+
+    // The plugin folder, so a view can open the package's own documents
+    // (THIRD_PARTY.md, manifest/files.json) that ship beside the binaries.
+    std::wstring pluginDir() const
+    {
+        const std::lock_guard lock(m_mutex);
+        return m_pluginDir;
     }
 
     std::wstring error() const
@@ -371,6 +579,7 @@ public:
             notify();
     }
 
+    // Which cards the window keeps folded. The ids are the GroupCard titles, so
     // Which cards the window keeps folded. The ids are the GroupCard titles, so
     // the list survives a restart and both faces could share it later. A card
     // the user has never toggled takes the `fallback` the view passes: the
@@ -539,19 +748,15 @@ private:
     void adoptLocked(const Form& form)
     {
         m_form = form;
-        // A backend this machine does not have cannot be adopted: the form would
-        // promise a terminal that will not start.
-        if (form.backend != Backend::None || m_backends.wt || m_backends.conhost)
-            m_form.backend = resolveBackend(m_backends, form.backend);
+        resolveBackendLocked(m_form);
     }
 
-    // Whether the adopted form moved to another port: the one change that makes
-    // the captured identity stale (TIO-010). A serial-parameter or backend edit
-    // says nothing new about the device, so it never triggers a re-read.
-    bool portChangedLocked(const Port& before) const
+    // A backend this machine does not have cannot stay in a form: it would
+    // promise a terminal that will not start.
+    void resolveBackendLocked(Form& form) const
     {
-        const Port now = m_form.parsed();
-        return now.ok() && (!before.ok() || now.com != before.com);
+        if (form.backend != Backend::None || m_backends.wt || m_backends.conhost)
+            form.backend = resolveBackend(m_backends, form.backend);
     }
 
     bool writeSettingsLocked()
@@ -603,7 +808,8 @@ private:
         m_identityName.clear();
         m_identityDetails = DeviceDetails();
         m_identityValid = false;
-        const Port port = m_form.parsed();
+        ensureTabLocked();
+        const Port port = m_tabs[m_activeTab].form.parsed();
         if (!port.ok())
             return;
         std::wstring id, description;
@@ -617,15 +823,33 @@ private:
         }
     }
 
-    Readiness readinessLocked() const
+    // The focused tab's gates: these drive the window's Launch button. The
+    // Session gate is the tab's own — a tab with a running session cannot start
+    // a second one on the same port; other tabs are unaffected.
+    Readiness readinessLocked(const SessionTab& tab) const
+    {
+        Environment env;
+        env.port = tab.form.parsed();
+        env.serial = tab.form.serial;
+        env.identityKnown = m_identityValid;
+        env.packageValid = m_package.ok;
+        env.backend = tab.form.backend;
+        env.sessionActive = tab.session.active();
+        return check(env);
+    }
+
+    // The default form's gates: these drive the search box's launch row. Its
+    // Session gate is on when a session already runs the default port.
+    Readiness defaultReadinessLocked() const
     {
         Environment env;
         env.port = m_form.parsed();
         env.serial = m_form.serial;
+        const SessionTab* bound = tabForPortLocked(env.port.com);
         env.identityKnown = m_identityValid;
         env.packageValid = m_package.ok;
         env.backend = m_form.backend;
-        env.sessionActive = m_session.active();
+        env.sessionActive = bound && bound->session.active();
         return check(env);
     }
 
@@ -662,10 +886,23 @@ private:
             + (port.ok() ? "COM" + std::to_string(port.com) + " -> " + port.device()
                          : std::string("none"))
             + "\n";
-        text += "session   : " + std::string(phaseId(m_session.phase));
-        if (m_session.pid)
-            text += " pid " + std::to_string(m_session.pid);
-        text += " port " + std::string(portStateId(m_session.port)) + "\n";
+        text += "\nsessions  : ";
+        if (m_tabs.empty()) {
+            text += "none";
+        } else {
+            for (std::size_t i = 0; i < m_tabs.size(); ++i) {
+                const SessionTab& tab = m_tabs[i];
+                if (i)
+                    text += " · ";
+                text += "COM" + std::to_string(tab.form.parsed().com) + " "
+                    + std::string(phaseId(tab.session.phase));
+                if (tab.session.pid)
+                    text += " pid " + std::to_string(tab.session.pid);
+                if (i == m_activeTab)
+                    text += " (focused)";
+            }
+        }
+        text += "\n";
         if (!m_errorCode.empty())
             text += "last error: " + m_errorCode + "\n";
         text += "privacy   : no serial payload is read or logged; the port path is kept out of shared logs\n";
@@ -680,14 +917,14 @@ private:
     std::string m_dataDir;
 
     Form m_form;
-    Session m_session;
+    std::vector<SessionTab> m_tabs; // one port per tab; the window's tabs
+    std::size_t m_activeTab = 0;    // the tab the window draws
     Backends m_backends;
     VerifyResult m_package;
     std::vector<PortInfo> m_ports;
     winshun::Json m_persisted;
     winshun::Json m_hostSettings;
     std::string m_packageVersion;
-    std::string m_token;
     std::string m_errorCode;
     std::vector<std::string> m_collapsed; // folded card ids (TIO-008)
     std::vector<std::string> m_touched;   // cards the user has folded/unfolded once

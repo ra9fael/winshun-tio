@@ -10,6 +10,8 @@
 // text, so a test can assert on the code instead of a translated string.
 #pragma once
 
+#include "winshun.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -478,6 +480,18 @@ struct Session {
     bool busy() const { return phase == Phase::Validating || phase == Phase::Starting || phase == Phase::Stopping; }
 };
 
+// What the user has entered. This is the unit that is saved, launched, and
+// handed between the search box and the window: one per session tab, and one
+// more as the configuration the next session starts from. The port string is
+// kept as typed and parsed on demand: the parse error names what to fix.
+struct Form {
+    std::wstring port;
+    Serial serial;
+    Backend backend = Backend::None;
+
+    Port parsed() const;
+};
+
 // Rejects a transition that would run two sessions at once or resurrect a dead
 // one. Returns false and leaves the session untouched.
 inline bool beginValidation(Session& s)
@@ -612,6 +626,13 @@ inline const char* gateId(Gate gate)
     case Gate::Session: return "session";
     }
     return "port";
+}
+
+// Defined here rather than inline: the conversion needs winshun.h's utf8, and
+// logic.h is the one header the pure tests include without the Win32 layer.
+inline Port Form::parsed() const
+{
+    return parsePort(winshun::utf8(port));
 }
 
 } // namespace tioplug

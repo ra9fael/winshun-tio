@@ -64,8 +64,16 @@ inline std::vector<Row> buildRows(const Snapshot& s, Browse browse, const Lang& 
     }
 
     // ---- the main list ----
-    const bool active = s.session.active() || s.session.phase == Phase::Validating;
-    const bool ready = s.readiness.ready();
+    // The launch row shows the default configuration: launching it binds a tab
+    // (or reuses the idle one) for that port. A session already running the
+    // default port is what the row then stops; other sessions keep running.
+    const SessionView* bound = nullptr;
+    for (const SessionView& view : s.sessions)
+        if (s.port.ok() && view.form.parsed().com == s.port.com)
+            bound = &view;
+    const bool active = bound && (bound->session.active()
+        || bound->session.phase == Phase::Validating);
+    const bool ready = s.defaultReadiness.ready();
 
     rows.push_back(groupRow("launch", lang.groupLaunch));
 
@@ -89,16 +97,47 @@ inline std::vector<Row> buildRows(const Snapshot& s, Browse browse, const Lang& 
         // A running session says so, and says the port state exactly as recorded:
         // a started process is not a connected port (TIO-007).
         const char* phase = lang.running;
-        if (s.session.phase == Phase::Starting)
+        if (bound->session.phase == Phase::Starting)
             phase = lang.starting;
-        else if (s.session.phase == Phase::Stopping)
+        else if (bound->session.phase == Phase::Stopping)
             phase = lang.stopping;
         main.subtitle = std::string(phase) + lang.separator + main.subtitle;
     } else if (!ready) {
         // Name what is missing rather than leaving a dead row.
-        main.subtitle = std::string(lang.blocked) + ": " + gateText(s.readiness, lang);
+        main.subtitle = std::string(lang.blocked) + ": " + gateText(s.defaultReadiness, lang);
     }
     rows.push_back(std::move(main));
+
+    // Every session the window opened gets its own row: the search box stays
+    // honest about processes that are out there while the user works here.
+    bool anyOther = false;
+    for (const SessionView& view : s.sessions) {
+        if (&view == bound || (!view.session.active()
+            && view.session.phase != Phase::Validating))
+            continue;
+        if (!anyOther) {
+            rows.push_back(groupRow("sessions", lang.groupSessions));
+            anyOther = true;
+        }
+        Row row;
+        row.id = "stop:" + std::to_string(view.form.parsed().com);
+        row.title = "tio COM" + std::to_string(view.form.parsed().com);
+        const char* phase = lang.running;
+        if (view.session.phase == Phase::Starting)
+            phase = lang.starting;
+        else if (view.session.phase == Phase::Stopping)
+            phase = lang.stopping;
+        else if (view.session.phase == Phase::Validating)
+            phase = lang.starting;
+        row.subtitle = std::string(phase) + lang.separator
+            + serialText(view.form.serial) + lang.separator
+            + backendLabel(view.form.backend, lang);
+        row.icon = "glyph:U+E71A";
+        row.action = "stopSession";
+        row.actionKey = "Enter";
+        row.score = 95;
+        rows.push_back(std::move(row));
+    }
 
     rows.push_back(groupRow("parameters", lang.groupParameters));
     const std::string com = s.port.ok() ? "COM" + std::to_string(s.port.com) : "—";

@@ -4,10 +4,14 @@
 
 ### Standalone window overhaul
 
-- **Parameter segmented radios**: data bits, parity, stop bits, and flow control switch to the same segmented radio track as the host's plugin pages (`TokenSegmented`, sunken rail with a moving pill, drawn from the `nativeLook` contract). Baud rate keeps its dropdown because the candidate list is long. Keyboard semantics are unchanged: Tab stops at the first segment, arrows change the value.
-- **Card fold fix**: clicking anywhere on the title row toggles fold. The previous hot region was a strip below the title that didn't overlap it, so a click on the title never landed — the fold looked broken.
+- **Multi-session (session-oriented)**: the window is now tabbed — each tab binds one port to at most one process, so COM8 and COM9 can run at once. The tab bar shows the COM number, the Device-Manager name and a state dot; "＋ New session" only offers ports nobody holds (**one port, one session, ever**); tabs close (stop first while running) and clone (parameters copied, refused while the port is held); Restart = stop, then launch again with the same form. Launch/Stop act on the focused tab only — other tabs' sessions are untouched; host shutdown still stops everything.
+- **The search box follows**: the main row still shows the saved configuration (it turns into "Stop" while a session runs that port); the window's other sessions are listed row by row under "Sessions (Enter stops)", and Enter stops exactly that row — no more stop-everything.
+- **Package integrity is verifiable**: the card gains "Third-party notes" and "File manifest" buttons that open the **in-package** `THIRD_PARTY.md` and `manifest/files.json` — per-file sources, licences and hashes; what opens is the copy the launcher verified, not a web page.
+
+### Earlier
+
 - **Port dropdown matches Device Manager**: each entry now shows the Windows friendly name (`SPDRP_FRIENDLYNAME`, the line Device Manager lists under Ports (COM & LPT), e.g. `Silicon Labs CP210x USB to UART Bridge (COM8)`) instead of a bare `COMn`; the second line keeps the `/dev/ttySn` mapping and the instance id.
-- **Identity captures automatically**: picking a port re-reads the identity at once (`Controller::preview`, in memory only — a save stays an explicit Save), so no button press is needed and the capture timestamp follows. Launch still revalidates per TIO-010.
+- **Identity captures automatically**: picking a port re-reads the identity at once (previewed into the focused tab, in memory only — a save stays an explicit Save), so no button press is needed and the capture timestamp follows. Launch still revalidates per TIO-010.
 - **Device details as a fold card**: the part of the old "Device identity" card that duplicated the dropdown (the big friendly-name line) is gone; it is now a top-level "Device details" card — the header carries the capture time, and unfolding shows manufacturer, product, VID/PID, serial, bus, driver, location, instance id and Windows-reported problem code. It starts folded, and the user's own choice is remembered separately (`ui.touched`), so folding another card never resets it.
 - **The DTR/RTS card is removed**: the pinned tio 3.9 has no control-line options, and the card only took space; the window no longer shows it (the search-box information row is unchanged).
 

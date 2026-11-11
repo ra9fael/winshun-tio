@@ -63,6 +63,8 @@ TIO-007/008/013: running status does not fabricate connection status. The select
 |---|---|---|
 | Port input/list | Positive COMn with n-1 mapping; distinguish empty list, invalid input and removal; parsing differs from actual existence | TIO-001/004/010 |
 | Identity | The port dropdown shows the Device Manager friendly name; picking a port recaptures the identity automatically, with no button; the "Device details" card starts folded and shows manufacturer, product, VID/PID, serial, bus, driver, location, instance id and problem code, with the capture time in its header | TIO-010/013 |
+| Multi-session | Tabbed: each tab binds one port and at most one process; one port never carries two sessions; Launch/Stop act on the focused tab; host shutdown stops all; the search box lists other sessions row by row and stops one row at a time | TIO-007/008/013 |
+| Package integrity | Status line + links opening the in-package THIRD_PARTY.md and manifest/files.json (per-file sources, licences, hashes — the exact copies the launcher verified) | TIO-002/003 |
 | Serial form | Baud/data/parity/stop/flow values supported by locked version; inline errors preserve other inputs | TIO-011 |
 | DTR/RTS | Show actual defaults on first configuration and save; reuse thereafter; explicit advanced changes only, unsupported/unknown modes unavailable, no per-launch confirmation | TIO-009 |
 | Backend | Unprobed/verified available/missing/incompatible; no automatic download | TIO-005 |

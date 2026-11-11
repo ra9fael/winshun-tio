@@ -623,6 +623,82 @@ static void testWindowEntry()
     }
 }
 
+// The window's sessions, listed on their own rows: the search box stays honest
+// about processes that are out there while the user works elsewhere.
+static void testSessionRows()
+{
+    Lang lang;
+    Snapshot s;
+    s.port = parsePort("COM10");
+    s.serial.baudrate = 115200;
+
+    // No tabs, no session rows: the main list is the plain one.
+    CHECK(buildRows(s, Browse::None, lang).size() >= 2, "an empty tab list adds no rows");
+
+    // A running session the window opened, on a port the search box does not
+    // name: its own row, stop on Enter, the port in the id.
+    SessionView other;
+    other.form.port = L"COM8";
+    other.form.serial.baudrate = 9600;
+    other.form.backend = Backend::Conhost;
+    other.session.com = 8;
+    other.session.phase = Phase::Running;
+    other.session.pid = 4321;
+    other.focused = false;
+    s.sessions.push_back(other);
+
+    const std::vector<Row> rows = buildRows(s, Browse::None, lang);
+    const Row* sessionRow = nullptr;
+    for (const Row& row : rows) {
+        if (row.id == "stop:8")
+            sessionRow = &row;
+    }
+    CHECK(sessionRow != nullptr, "a running session has its own row");
+    if (sessionRow) {
+        CHECK(sessionRow->title.find("COM8") != std::string::npos,
+            "the session row names its port", sessionRow->title);
+        CHECK(sessionRow->action == "stopSession", "the session row stops on Enter",
+            sessionRow->action);
+        CHECK(sessionRow->subtitle.find("9600") != std::string::npos,
+            "the session row shows its own parameters", sessionRow->subtitle);
+        CHECK(sessionRow->subtitle.find("running") == std::string::npos,
+            "the subtitle is localized, not a phase id", sessionRow->subtitle);
+    }
+
+    // The launch row is unaffected by another port's session: it still launches.
+    for (const Row& row : rows) {
+        if (row.id == "launch")
+            CHECK(row.action == "launch", "another port's session does not block the launch row",
+                row.action);
+    }
+
+    // A session bound to the default port IS the launch row: it stops, and no
+    // duplicate session row appears for it.
+    Snapshot bound = s;
+    bound.sessions.clear();
+    SessionView own;
+    own.form.port = L"COM10";
+    own.form.serial.baudrate = 115200;
+    own.session.com = 10;
+    own.session.phase = Phase::Running;
+    own.session.pid = 777;
+    own.focused = true;
+    bound.sessions.push_back(own);
+    const std::vector<Row> boundRows = buildRows(bound, Browse::None, lang);
+    const Row* launch = nullptr;
+    int stopRows = 0;
+    for (const Row& row : boundRows) {
+        if (row.id == "launch")
+            launch = &row;
+        if (row.action == "stopSession")
+            ++stopRows;
+    }
+    CHECK(launch != nullptr && launch->action == "stop",
+        "the bound session's stop lives on the launch row",
+        launch ? launch->action : "");
+    CHECK(stopRows == 0, "the bound session is not listed twice");
+}
+
 // The appearance contract: the look is read from the host's nativeLook, the
 // style, the corners and the size, so the window follows all four styles.
 static void testAppearance()
@@ -708,6 +784,7 @@ int main()
     testRows();
     testDiagnosticsView();
     testWindowEntry();
+    testSessionRows();
     testAppearance();
 
     if (g_failed == 0) {

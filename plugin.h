@@ -21,7 +21,7 @@ namespace tioplug {
 
 class TioPlugin final : public winshun::Plugin {
 public:
-    ~TioPlugin() override { core().controller().stop(true); }
+    ~TioPlugin() override { core().controller().stopAll(true); }
 
 protected:
     std::string name() const override { return "ra9fael.tio"; }
@@ -57,8 +57,9 @@ protected:
     {
         // The host ends this process about two seconds after the answer, so an
         // owned tio must be gone before then: an orphan would keep the serial
-        // port after the launcher disappeared.
-        core().controller().stop(true);
+        // port after the launcher disappeared. Every session stops, not just
+        // the focused one.
+        core().controller().stopAll(true);
     }
 
     winshun::Items query(const winshun::Query& q) override
@@ -102,7 +103,19 @@ protected:
             return {replace(rows())};
         }
         if (id == "stop") {
-            controller.stop(false);
+            // The row's port is the one whose session stops: other sessions,
+            // if the window opened any, keep running.
+            controller.stopPort(controller.form().parsed().com);
+            m_browse = Browse::None;
+            return {replace(rows())};
+        }
+        if (id == "stopSession") {
+            // One of the window's sessions, listed on its own row: the item id
+            // carries the port ("stop:<com>"), and only that session stops.
+            const std::string target = request.item["id"].toString();
+            const std::size_t colon = target.find(':');
+            if (colon != std::string::npos)
+                controller.stopPort(std::atoi(target.c_str() + colon + 1));
             m_browse = Browse::None;
             return {replace(rows())};
         }

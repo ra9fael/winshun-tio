@@ -13,8 +13,11 @@
 #include "rows.h"
 
 #include <QClipboard>
+#include <QDesktopServices>
+#include <QDir>
 #include <QGuiApplication>
 #include <QTimer>
+#include <QUrl>
 
 #include <functional>
 #include <mutex>
@@ -77,10 +80,23 @@ TioWindow::~TioWindow()
 
 void TioWindow::reload()
 {
-    // A dirty form is the user's work in progress: an outside change must not
-    // silently discard it.
+    // The form mirrors the focused tab: the cards below draw that tab, and a
+    // dirty form is the user's work in progress on it, which an outside change
+    // must not silently discard.
     if (!m_dirty)
-        m_form = core().controller().form();
+        m_form = focusedForm();
+}
+
+Form TioWindow::focusedForm() const
+{
+    // The controller guarantees at least one tab; its focused tab is what the
+    // window draws.
+    const Snapshot snapshot = core().controller().snapshot();
+    for (const SessionView& view : snapshot.sessions)
+        if (view.focused)
+            return view.form;
+    return snapshot.sessions.empty() ? core().controller().form()
+                                     : snapshot.sessions.front().form;
 }
 
 void TioWindow::recomputeDirty()
@@ -107,8 +123,13 @@ void TioWindow::edit(const std::function<void(Form&)>& change)
     if (m_form.backend == Backend::None) {
         // A backend this machine lacks is not a state the form may hold; keep
         // what was there rather than promising a terminal that will not start.
-        m_form.backend = core().controller().form().backend;
+        m_form.backend = focusedForm().backend;
     }
+    // The edit lands on the focused tab, in memory only: a save stays an
+    // explicit Save. The controller refuses a port another tab holds.
+    std::string error;
+    if (!core().controller().preview(m_form, error))
+        emit notice(fromStd(describeError(error, zh())));
     recomputeDirty();
     emit changed();
 }
@@ -296,6 +317,8 @@ QString TioWindow::packageProblem() const
 
 bool TioWindow::canLaunch() const
 {
+    // The readiness snapshot is the focused tab's: its gates, its Launch button.
+    // Other tabs' sessions never appear here — the Session gate is per port.
     return core().controller().snapshot().readiness.ready()
         && validate(m_form.serial) == ParamError::None && m_form.parsed().ok()
         && m_form.backend != Backend::None;
@@ -323,23 +346,128 @@ QString TioWindow::errorText() const
     return fromStd(describeError(code, zh()));
 }
 
-bool TioWindow::sessionActive() const { return core().controller().snapshot().session.active(); }
-bool TioWindow::sessionBusy() const { return core().controller().snapshot().session.busy(); }
+bool TioWindow::sessionActive() const
+{
+    for (const SessionView& view : core().controller().snapshot().sessions)
+        if (view.focused)
+            return view.session.active();
+    return false;
+}
+
+bool TioWindow::sessionBusy() const
+{
+    for (const SessionView& view : core().controller().snapshot().sessions)
+        if (view.focused)
+            return view.session.busy();
+    return false;
+}
 
 QString TioWindow::sessionPhase() const
 {
-    return fromStd(phaseId(core().controller().snapshot().session.phase));
+    for (const SessionView& view : core().controller().snapshot().sessions)
+        if (view.focused)
+            return fromStd(phaseId(view.session.phase));
+    return fromStd(phaseId(Phase::Configuring));
 }
 
 QString TioWindow::sessionPortState() const
 {
-    return fromStd(portStateId(core().controller().snapshot().session.port));
+    for (const SessionView& view : core().controller().snapshot().sessions)
+        if (view.focused)
+            return fromStd(portStateId(view.session.port));
+    return fromStd(portStateId(PortState::Unknown));
 }
 
 QString TioWindow::sessionPid() const
 {
-    const Session session = core().controller().snapshot().session;
-    return session.pid ? QString::number(session.pid) : QString();
+    for (const SessionView& view : core().controller().snapshot().sessions)
+        if (view.focused && view.session.pid)
+            return QString::number(view.session.pid);
+    return QString();
+}
+
+// One entry per tab, in tab order: what the tab bar draws. The name is the
+// Device-Manager friendly name of the tab's port, so a tab is recognisable
+// before it is clicked.
+QVariantList TioWindow::sessions() const
+{
+    QVariantList out;
+    const Snapshot snapshot = core().controller().snapshot();
+    for (const SessionView& view : snapshot.sessions) {
+        const int com = view.form.parsed().com;
+        QVariantMap row;
+        row["index"] = static_cast<int>(&view - snapshot.sessions.data());
+        row["com"] = com;
+        QString name;
+        for (const PortInfo& info : snapshot.ports)
+            if (info.com == com && !info.description.empty())
+                name = fromStd(winshun::utf8(info.description));
+        row["name"] = name.isEmpty() ? QString("COM%1").arg(com) : name;
+        row["phase"] = fromStd(phaseId(view.session.phase));
+        row["running"] = view.session.active();
+        row["busy"] = view.session.busy();
+        row["focused"] = view.focused;
+        out << row;
+    }
+    return out;
+}
+
+void TioWindow::focusSession(int index)
+{
+    if (index < 0)
+        return;
+    core().controller().focusSession(static_cast<std::size_t>(index));
+    // The form mirrors the focused tab unconditionally: the edits already
+    // live in the tab (preview adopts them at once), so nothing is lost by
+    // switching, and the cards below must draw the tab the user clicked.
+    m_form = focusedForm();
+    recomputeDirty();
+    emit changed();
+}
+
+bool TioWindow::newSession(int com)
+{
+    if (com <= 0)
+        return false;
+    // A new tab starts from the default configuration with the picked port:
+    // the picker only offers ports no tab holds, so the controller accepts.
+    Form seed = core().controller().form();
+    seed.port = L"COM" + std::to_wstring(com);
+    std::string error;
+    if (!core().controller().createSession(seed, error)) {
+        emit notice(fromStd(describeError(error, zh())));
+        return false;
+    }
+    reload();
+    recomputeDirty();
+    emit changed();
+    return true;
+}
+
+bool TioWindow::cloneSession(int index)
+{
+    std::string error;
+    if (!core().controller().cloneSession(static_cast<std::size_t>(index), error)) {
+        emit notice(fromStd(describeError(error, zh())));
+        return false;
+    }
+    reload();
+    recomputeDirty();
+    emit changed();
+    return true;
+}
+
+bool TioWindow::closeSession(int index)
+{
+    std::string error;
+    if (!core().controller().closeSession(static_cast<std::size_t>(index), error)) {
+        emit notice(fromStd(describeError(error, zh())));
+        return false;
+    }
+    reload();
+    recomputeDirty();
+    emit changed();
+    return true;
 }
 
 // ---- card folding (TIO-008) -------------------------------------------------------
@@ -355,7 +483,10 @@ void TioWindow::setCardCollapsed(const QString& id, bool collapsed)
 }
 QString TioWindow::sessionToken() const
 {
-    return fromStd(core().controller().snapshot().session.token);
+    for (const SessionView& view : core().controller().snapshot().sessions)
+        if (view.focused)
+            return fromStd(view.session.token);
+    return QString();
 }
 
 // ---- editing ---------------------------------------------------------------------
@@ -365,12 +496,8 @@ void TioWindow::selectPort(int com)
     if (com <= 0)
         return;
     edit([com](Form& form) { form.port = L"COM" + std::to_wstring(com); });
-    // Capture is automatic: the identity is re-read for the port just picked,
-    // in memory only (a save stays an explicit Save). The user never presses
-    // anything to learn what the device says (TIO-010).
-    core().controller().preview(m_form);
-    recomputeDirty();
-    emit changed();
+    // edit() previews into the focused tab, which recaptures the identity for
+    // the port just picked (TIO-010); the notice names a refused port.
 }
 
 void TioWindow::setBaudrate(const QString& rate)
@@ -436,6 +563,16 @@ void TioWindow::refresh()
     emit changed();
 }
 
+// The integrity card's verifiable links: the documents ship in the plugin
+// folder, so the file URL opens the exact copy the launcher verified.
+void TioWindow::openPackageDoc(const QString& name)
+{
+    const std::wstring dir = core().controller().pluginDir();
+    const QUrl url = QUrl::fromLocalFile(
+        QDir::fromNativeSeparators(QString::fromStdWString(dir)) + "/" + name);
+    QDesktopServices::openUrl(url);
+}
+
 // ---- persistence and the session --------------------------------------------------
 
 bool TioWindow::save()
@@ -452,8 +589,10 @@ bool TioWindow::save()
 
 bool TioWindow::launch()
 {
-    // Launch cannot run something the file does not have: what is on screen is
-    // what starts, and it is saved first so the search box agrees afterwards.
+    // Launch binds (or reuses) the tab for the port on screen, and saves the
+    // parameters first so the search box agrees afterwards. Other tabs'
+    // sessions are unaffected: one port carries one process, and this port is
+    // this tab's.
     std::string error;
     const bool started = core().controller().launch(m_form, error);
     if (!started) {
@@ -472,9 +611,19 @@ bool TioWindow::launch()
 
 void TioWindow::stop()
 {
-    core().controller().stop(false);
-    emit notice(zh() ? "已停止本插件启动的会话" : "Stopped the session this plugin started");
+    // Only the focused tab's session stops: the other tabs keep running, which
+    // is the point of a session-oriented window.
+    core().controller().stopActive();
+    emit notice(zh() ? "已停止这个会话" : "Stopped this session");
     emit changed();
+}
+
+void TioWindow::restart()
+{
+    // Stop waits for the graceful timeout, so the port is free again when the
+    // launch follows; the same form restarts on the same port.
+    stop();
+    launch();
 }
 
 QString TioWindow::diagnostics() const

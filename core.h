@@ -188,6 +188,7 @@ inline Lang makeLang(bool zh)
     if (zh)
         return out;
     out.groupLaunch = "Launch";
+    out.groupSessions = "Sessions (Enter stops)";
     out.groupParameters = "Parameters (Enter edits in place)";
     out.groupInformation = "Information";
     out.stop = "Stop";
@@ -228,6 +229,13 @@ inline std::string describeError(const std::string& code, bool zh)
         return zh ? "启动前检查未通过" : "A pre-launch check did not pass";
     if (code == "a session is already active")
         return zh ? "已有会话在运行" : "A session is already running";
+    if (code == "the port is held by another session")
+        return zh ? "这个端口已被另一个会话占用" : "The port is held by another session";
+    if (code == "the session must be stopped before it is closed")
+        return zh ? "先停止会话，再关闭这个页签"
+                  : "Stop the session before closing its tab";
+    if (code == "no session to stop")
+        return zh ? "这个端口没有在运行的会话" : "No running session on this port";
     if (code == "no usable backend")
         return zh ? "没有可用后端" : "No usable backend";
     if (code == "the plugin path holds a character Windows Terminal treats as a separator")

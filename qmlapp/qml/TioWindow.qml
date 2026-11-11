@@ -104,6 +104,163 @@ Window {
         }
     }
 
+    // ---- session tabs: the window is session-oriented ------------------------
+    // One tab binds one port to at most one process; the cards below draw the
+    // focused tab. A new tab is created from the picker, which only offers
+    // ports no tab holds; closing refuses while the session runs.
+    RowLayout {
+        id: tabBar
+        Layout.fillWidth: true
+        spacing: 6
+
+        Repeater {
+            model: typeof tio !== "undefined" ? tio.sessions : []
+
+            delegate: Rectangle {
+                required property var modelData
+                property bool focused: modelData.focused
+
+                Layout.preferredHeight: sessionTabText.implicitHeight + 14
+                Layout.preferredWidth: sessionTabColumn.implicitWidth + 26
+                radius: DesignTokens.smallRadius
+                color: modelData.focused ? DesignTokens.windowColor : DesignTokens.cardColor
+                border.width: modelData.focused ? 1 : 0
+                border.color: DesignTokens.borderColor
+
+                RowLayout {
+                    id: sessionTabRow
+                    anchors.centerIn: parent
+                    spacing: 6
+
+                    // The state dot: grey idle, green running (and busy),
+                    // red ring while the session is stopping.
+                    Rectangle {
+                        id: sessionDot
+                        width: 8
+                        height: 8
+                        radius: 4
+                        color: modelData.phase === "running" ? DesignTokens.okColor
+                             : modelData.phase === "stopping" ? DesignTokens.warnColor
+                             : DesignTokens.faintColor
+                    }
+
+                    ColumnLayout {
+                        id: sessionTabColumn
+                        spacing: 0
+
+                        Label {
+                            id: sessionTabText
+                            text: "COM" + modelData.com
+                            color: DesignTokens.textColor
+                            font.pixelSize: DesignTokens.fontCaption
+                            font.weight: modelData.focused ? Font.DemiBold : Font.Normal
+                        }
+                        Label {
+                            Layout.maximumWidth: 150
+                            text: modelData.name
+                            color: DesignTokens.mutedColor
+                            font.pixelSize: DesignTokens.fontSmall
+                            elide: Text.ElideRight
+                        }
+                    }
+
+                    // Closing refuses while the session runs: the tab is the
+                    // only handle to its process, and the notice says so.
+                    TokenButton {
+                        text: "✕"
+                        Layout.preferredHeight: 22
+                        onClicked: {
+                            if (modelData.running || modelData.busy)
+                                footer.show(window.tr("先停止会话，再关闭这个页签",
+                                                      "Stop the session before closing its tab"))
+                            else
+                                tio.closeSession(modelData.index)
+                        }
+                    }
+                }
+
+                MouseArea {
+                    anchors.fill: parent
+                    z: -1
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: if (!modelData.focused) tio.focusSession(modelData.index)
+                }
+            }
+        }
+
+        TokenButton {
+            id: newTabButton
+            text: window.tr("＋ 新建会话", "＋ New session")
+            onClicked: {
+                // Only ports no tab holds are offered: one port, one session.
+                const held = new Set()
+                const list = typeof tio !== "undefined" ? tio.sessions : []
+                for (let i = 0; i < list.length; ++i)
+                    held.add(list[i].com)
+                const free = []
+                const ports = typeof tio !== "undefined" ? tio.ports : []
+                for (let i = 0; i < ports.length; ++i)
+                    if (!held.has(ports[i].com))
+                        free.push(ports[i])
+                newSessionPorts = free
+                if (free.length > 0) {
+                    newSessionCombo.currentIndex = 0
+                    newSessionDialog.open()
+                } else {
+                    footer.show(window.tr("没有空闲端口：每个会话占用一个端口",
+                                          "no free port: every session holds one"))
+                }
+            }
+        }
+    }
+
+    property var newSessionPorts: []
+
+    Dialog {
+        id: newSessionDialog
+        modal: true
+        anchors.centerIn: parent
+        title: window.tr("新建会话", "New session")
+        standardButtons: Dialog.NoButton
+        width: 460
+
+        ColumnLayout {
+            spacing: 12
+            Label {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                color: DesignTokens.textColor
+                text: window.tr("选一个还没被占用的端口；参数先沿用保存的配置，开起来前随时可改。",
+                                "Pick a port no session holds; the parameters start from the saved configuration and stay editable until launch.")
+            }
+            TokenComboBox {
+                id: newSessionCombo
+                Layout.fillWidth: true
+                model: window.newSessionPorts
+                textRole: "name"
+                valueRole: "com"
+            }
+            RowLayout {
+                Layout.alignment: Qt.AlignRight
+                spacing: 8
+                TokenButton {
+                    text: window.tr("取消", "Cancel")
+                    onClicked: newSessionDialog.close()
+                }
+                TokenButton {
+                    text: window.tr("创建会话", "Create session")
+                    onClicked: {
+                        if (newSessionCombo.currentIndex >= 0) {
+                            const row = window.newSessionPorts[newSessionCombo.currentIndex]
+                            tio.newSession(row.com)
+                        }
+                        newSessionDialog.close()
+                    }
+                }
+            }
+        }
+    }
+
     ColumnLayout {
         anchors.fill: parent
         spacing: 0
@@ -124,6 +281,79 @@ Window {
                 y: DesignTokens.pad
                 width: scroller.availableWidth - DesignTokens.pad * 2
                 spacing: DesignTokens.gap
+
+                // ---- session ----
+                GroupCard {
+                    id: sessionCard
+                    title: window.tr("会话", "Session")
+                    collapsed: typeof tio !== "undefined" && tio.cardCollapsed(sessionCard.title)
+                    onToggled: function (folded) { tio.setCardCollapsed(sessionCard.title, folded) }
+                    note: typeof tio !== "undefined" && tio.sessionActive
+                          ? window.tr("进程在跑；端口状态未知直到 tio 自己给出证据", "the process runs; the port state is unknown until tio proves it")
+                          : ""
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 8
+
+                        TokenButton {
+                            text: window.tr("启动", "Launch")
+                            enabled: typeof tio !== "undefined" && tio.canLaunch && !tio.sessionActive
+                            onClicked: tio.launch()
+                        }
+                        TokenButton {
+                            text: window.tr("停止", "Stop")
+                            enabled: typeof tio !== "undefined" && tio.sessionActive
+                            onClicked: tio.stop()
+                        }
+                        TokenButton {
+                            text: window.tr("重启", "Restart")
+                            enabled: typeof tio !== "undefined" && tio.sessionActive
+                            onClicked: tio.restart()
+                        }
+                        TokenButton {
+                            text: window.tr("克隆会话", "Clone session")
+                            enabled: typeof tio !== "undefined" && tio.sessions.length > 0
+                                     && tio.sessions.length < tio.ports.length
+                            onClicked: {
+                                const list = tio.sessions
+                                for (let i = 0; i < list.length; ++i)
+                                    if (list[i].focused)
+                                        tio.cloneSession(i)
+                            }
+                        }
+                    }
+
+                    GridLayout {
+                        columns: 2
+                        columnSpacing: 16
+                        rowSpacing: 4
+                        visible: typeof tio !== "undefined" && tio.sessionActive
+                        Label { text: window.tr("阶段", "Phase"); color: DesignTokens.mutedColor; font.pixelSize: DesignTokens.fontSmall }
+                        Label { text: typeof tio !== "undefined" ? tio.sessionPhase : ""
+                            color: DesignTokens.textColor; font.pixelSize: DesignTokens.fontCaption }
+                        Label { text: window.tr("端口状态", "Port state"); color: DesignTokens.mutedColor; font.pixelSize: DesignTokens.fontSmall }
+                        Label { text: typeof tio !== "undefined" ? tio.sessionPortState : ""
+                            color: DesignTokens.warnColor; font.pixelSize: DesignTokens.fontCaption }
+                        Label { text: "PID"; color: DesignTokens.mutedColor; font.pixelSize: DesignTokens.fontSmall }
+                        Label { text: typeof tio !== "undefined" ? tio.sessionPid : ""
+                            color: DesignTokens.textColor; font.pixelSize: DesignTokens.fontCaption }
+                        Label { text: window.tr("会话 ID", "Session id"); color: DesignTokens.mutedColor; font.pixelSize: DesignTokens.fontSmall }
+                        Label { text: typeof tio !== "undefined" ? tio.sessionToken : ""
+                            color: DesignTokens.textColor; font.pixelSize: DesignTokens.fontCaption }
+                    }
+
+                    Label {
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                        color: DesignTokens.mutedColor
+                        font.pixelSize: DesignTokens.fontSmall
+                        text: window.tr(
+                            "“已启动”不等于“端口已打开”：插件不读 tio 的终端输出，端口状态只有在上游给出可验证信号时才会变化。",
+                            "\"Started\" is not \"port open\": the plugin does not read tio's terminal output, so the "
+                            + "port state only changes when the upstream gives a verifiable signal.")
+                    }
+                }
 
                 // ---- port ----
                 GroupCard {
@@ -420,58 +650,30 @@ Window {
                             elide: Text.ElideRight
                         }
                     }
-                }
 
-                // ---- session ----
-                GroupCard {
-                    id: sessionCard
-                    title: window.tr("会话", "Session")
-                    collapsed: typeof tio !== "undefined" && tio.cardCollapsed(sessionCard.title)
-                    onToggled: function (folded) { tio.setCardCollapsed(sessionCard.title, folded) }
-                    note: typeof tio !== "undefined" && tio.sessionBusy
-                          ? window.tr("正在启动或停止", "starting or stopping")
-                          : typeof tio !== "undefined" && tio.sessionActive
-                            ? window.tr("本插件启动的会话", "started by this plugin")
-                            : window.tr("没有会话", "no session")
-
-                    GridLayout {
+                    // The package ships its own third-party record: what came
+                    // from where, under which licence, per file. The links open
+                    // the exact copies the launcher verified, not a web page.
+                    RowLayout {
                         Layout.fillWidth: true
-                        columns: 2
-                        columnSpacing: 16
-                        rowSpacing: 4
-                        visible: typeof tio !== "undefined" && tio.sessionActive
-
-                        Label { text: window.tr("阶段", "Phase"); color: DesignTokens.mutedColor; font.pixelSize: DesignTokens.fontSmall }
+                        spacing: 8
                         Label {
-                            text: typeof tio !== "undefined" ? tio.sessionPhase : ""
-                            color: DesignTokens.textColor; font.pixelSize: DesignTokens.fontCaption
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                            color: DesignTokens.mutedColor
+                            font.pixelSize: DesignTokens.fontSmall
+                            text: window.tr(
+                                "包里的三方文件：tio 与 MSYS2 运行时，来源与许可证逐文件可查。",
+                                "The package's third-party files: tio and the MSYS2 runtime, with per-file sources and licences.")
                         }
-                        Label { text: window.tr("端口状态", "Port state"); color: DesignTokens.mutedColor; font.pixelSize: DesignTokens.fontSmall }
-                        Label {
-                            text: typeof tio !== "undefined" ? tio.sessionPortState : ""
-                            color: DesignTokens.warnColor; font.pixelSize: DesignTokens.fontCaption
+                        TokenButton {
+                            text: window.tr("第三方说明", "Third-party notes")
+                            onClicked: if (typeof tio !== "undefined") tio.openPackageDoc("THIRD_PARTY.md")
                         }
-                        Label { text: "PID"; color: DesignTokens.mutedColor; font.pixelSize: DesignTokens.fontSmall }
-                        Label {
-                            text: typeof tio !== "undefined" ? tio.sessionPid : ""
-                            color: DesignTokens.textColor; font.pixelSize: DesignTokens.fontCaption
+                        TokenButton {
+                            text: window.tr("文件清单", "File manifest")
+                            onClicked: if (typeof tio !== "undefined") tio.openPackageDoc("manifest/files.json")
                         }
-                        Label { text: window.tr("会话 ID", "Session id"); color: DesignTokens.mutedColor; font.pixelSize: DesignTokens.fontSmall }
-                        Label {
-                            text: typeof tio !== "undefined" ? tio.sessionToken : ""
-                            color: DesignTokens.textColor; font.pixelSize: DesignTokens.fontCaption
-                        }
-                    }
-
-                    Label {
-                        Layout.fillWidth: true
-                        wrapMode: Text.WordWrap
-                        color: DesignTokens.mutedColor
-                        font.pixelSize: DesignTokens.fontSmall
-                        text: window.tr(
-                            "“已启动”不等于“端口已打开”：插件不读 tio 的终端输出，端口状态只有在上游给出可验证信号时才会变化。",
-                            "\"Started\" is not \"port open\": the plugin does not read tio's terminal output, so the "
-                            + "port state only changes when the upstream gives a verifiable signal.")
                     }
                 }
 
