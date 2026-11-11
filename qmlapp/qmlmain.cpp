@@ -100,6 +100,16 @@ bool openWindow(QString& error)
         // window draws from it, so it looks like WinShun's own.
         g_engine->rootContext()->setContextProperty(u"themeBridge"_s, tioplug::themeBridge());
     }
+    // Standalone runs may ask for the device-details card to start unfolded, so
+    // a screenshot or a manual check can read the identity without a click.
+    // --details is parsed by the callers; the call lands before the QML loads,
+    // so the card's collapsed binding reads the unfolded state directly. The
+    // fold key is the localized title, and the run's locale is already set, so
+    // both titles are covered.
+    if (g_testDetailsOpen) {
+        tioplug::windowModel()->setCardCollapsed(u"设备详情"_s, false);
+        tioplug::windowModel()->setCardCollapsed(u"Device details"_s, false);
+    }
     if (g_engine->rootObjects().isEmpty()) {
         QObject::connect(g_engine, &QQmlApplicationEngine::warnings, g_engine,
             [](const QList<QQmlError>& warnings) {
@@ -117,11 +127,6 @@ bool openWindow(QString& error)
         error = u"the window's root is not a window"_s;
         return false;
     }
-    // Standalone runs may ask for the device details to be open at start, so a
-    // screenshot or a manual check can read the full identity without a click.
-    // --details is parsed by the callers; the value is the one they asked for.
-    if (g_testDetailsOpen)
-        window->setProperty("detailsOpen", true);
     window->show();
     window->raise();
     window->requestActivate();

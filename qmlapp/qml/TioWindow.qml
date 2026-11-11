@@ -1,9 +1,11 @@
 // TioWindow.qml - the standalone window (path B).
 //
-// The same five groups the search box shows, plus what a window can hold and the
-// list cannot: a read-only port dropdown with a refresh, the identity's capture
-// time, a collapsed panel explaining why the control lines cannot be set, the
-// session block, and Save beside Launch.
+// The same groups the search box shows, plus what a window can hold and the
+// list cannot: a read-only port dropdown named the way Device Manager names its
+// ports, a device-details card that captures automatically and folds the fine
+// print away, the session block, and Save beside Launch. The pinned tio 3.9 has
+// no DTR/RTS switch, so there is no control-lines card promising what cannot be
+// kept.
 //
 // Nothing here claims the port is open. A started process is "已启动", the port
 // state is whatever the session records (unknown unless something proves
@@ -16,10 +18,6 @@ Window {
     id: window
 
     property bool zh: typeof tio !== "undefined" ? tio.zh : true
-
-    // The device details start closed: the main line says what the device is,
-    // the panel opens what identifies it.
-    property bool detailsOpen: false
 
     title: zh ? "tio 串口终端" : "tio serial terminal"
     minimumWidth: DesignTokens.minWidth
@@ -146,7 +144,10 @@ Window {
                             Layout.fillWidth: true
                             Layout.preferredHeight: DesignTokens.rowHeight
                             model: typeof tio !== "undefined" ? tio.ports : []
-                            textRole: "title"
+                            // What the closed box shows is what Device Manager
+                            // shows under Ports (COM & LPT): the friendly name,
+                            // which already ends in "(COMn)".
+                            textRole: "name"
                             valueRole: "com"
                             currentIndex: {
                                 const list = model
@@ -166,12 +167,17 @@ Window {
                                 required property var modelData
                                 width: portBox.width
                                 height: DesignTokens.rowHeight
+                                highlighted: portBox.highlightedIndex === index
                                 contentItem: ColumnLayout {
                                     spacing: 0
                                     Label {
-                                        text: modelData.title
+                                        // The line Device Manager shows, plus where
+                                        // the port sits in tio's numbering.
+                                        text: modelData.name
                                         color: DesignTokens.textColor
                                         font.pixelSize: DesignTokens.fontCaption
+                                        elide: Text.ElideRight
+                                        Layout.fillWidth: true
                                     }
                                     Label {
                                         text: modelData.device + " · " + modelData.identity
@@ -190,102 +196,74 @@ Window {
                             onClicked: tio.refresh()
                         }
                     }
+                }
 
-                    // The device says more about itself than the instance id:
-                    // the main line shows what it is, the details panel opens
-                    // what identifies it (the chip's ids, the serial, the
-                    // driver) — the facts a launch decision rests on.
-                    FieldRow {
-                        label: window.tr("设备身份", "Device identity")
-                        hint: typeof tio !== "undefined" && tio.identityValid
-                              ? window.tr("采集于 ", "captured at ") + tio.identityTime
-                              : window.tr("身份未知：只能确认当前端口", "unknown: only the current port is confirmed")
-                        warn: !(typeof tio !== "undefined" && tio.identityValid)
+                // The combobox already names the device the way Device Manager
+                // does; this card holds only what that line does not say. It
+                // starts folded: capture is automatic (picking a port re-reads
+                // the identity), the fold is about reading the details, never
+                // about triggering them (TIO-010).
+                GroupCard {
+                    id: detailsCard
+                    title: window.tr("设备详情", "Device details")
+                    collapsed: typeof tio !== "undefined" && tio.cardCollapsed(detailsCard.title, true)
+                    onToggled: function (folded) { tio.setCardCollapsed(detailsCard.title, folded) }
+                    note: typeof tio !== "undefined" && tio.identityValid
+                          ? window.tr("采集于 ", "captured at ") + tio.identityTime
+                          : window.tr("身份未知：只能确认当前端口", "unknown: only the current port is confirmed")
+                    warn: !(typeof tio !== "undefined" && tio.identityValid)
 
-                        ColumnLayout {
-                            Layout.fillWidth: true
-                            spacing: 6
+                    // One row per fact, and a row only for a fact the
+                    // device actually reports.
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 4
 
-                            RowLayout {
-                                Layout.fillWidth: true
-                                spacing: 8
-
-                                Label {
-                                    Layout.fillWidth: true
-                                    text: typeof tio !== "undefined" && tio.identityValid
-                                          && tio.identityName.length > 0
-                                          ? tio.identityName
-                                          : (typeof tio !== "undefined" && tio.identityValid
-                                             ? tio.identity
-                                             : window.tr("（无）", "(none)"))
-                                    color: typeof tio !== "undefined" && tio.identityValid
-                                           ? DesignTokens.textColor : DesignTokens.mutedColor
-                                    font.pixelSize: DesignTokens.fontCaption
-                                    elide: Text.ElideRight
-                                }
-
-                                TokenButton {
-                                    text: detailsOpen
-                                          ? window.tr("收起详情", "Hide details")
-                                          : window.tr("设备详情", "Device details")
-                                    onClicked: detailsOpen = !detailsOpen
-                                }
-                            }
-
-                            // The details: one row per fact, and a row only for
-                            // a fact the device actually reports.
-                            ColumnLayout {
-                                Layout.fillWidth: true
-                                spacing: 4
-                                visible: detailsOpen
-
-                                DetailLine {
-                                    label: window.tr("厂商", "Manufacturer")
-                                    value: typeof tio !== "undefined" ? tio.identityManufacturer : ""
-                                }
-                                DetailLine {
-                                    label: window.tr("产品", "Product")
-                                    value: typeof tio !== "undefined" ? tio.identityChip : ""
-                                }
-                                DetailLine {
-                                    label: window.tr("VID/PID", "VID/PID")
-                                    value: typeof tio !== "undefined"
-                                          && (tio.identityVendorId.length > 0 || tio.identityProductId.length > 0)
-                                          ? tio.identityVendorId + " / " + tio.identityProductId : ""
-                                    mono: true
-                                }
-                                DetailLine {
-                                    label: window.tr("序列号", "Serial number")
-                                    value: typeof tio !== "undefined" ? tio.identitySerial : ""
-                                    mono: true
-                                }
-                                DetailLine {
-                                    label: window.tr("总线", "Bus")
-                                    value: typeof tio !== "undefined" ? tio.identityBus : ""
-                                }
-                                DetailLine {
-                                    label: window.tr("驱动", "Driver")
-                                    value: typeof tio !== "undefined" ? tio.identityDriver : ""
-                                    mono: true
-                                }
-                                DetailLine {
-                                    label: window.tr("位置", "Location")
-                                    value: typeof tio !== "undefined" ? tio.identityLocation : ""
-                                }
-                                DetailLine {
-                                    label: window.tr("实例 ID", "Instance id")
-                                    value: typeof tio !== "undefined" ? tio.identity : ""
-                                    mono: true
-                                }
-                                DetailLine {
-                                    label: window.tr("设备状态", "Device status")
-                                    value: typeof tio !== "undefined" && tio.identityProblem.length > 0
-                                          ? window.tr("Windows 报告问题码 ", "Windows reports problem code ")
-                                            + tio.identityProblem
-                                          : window.tr("正常", "no problem reported")
-                                    warn: typeof tio !== "undefined" && tio.identityProblem.length > 0
-                                }
-                            }
+                        DetailLine {
+                            label: window.tr("厂商", "Manufacturer")
+                            value: typeof tio !== "undefined" ? tio.identityManufacturer : ""
+                        }
+                        DetailLine {
+                            label: window.tr("产品", "Product")
+                            value: typeof tio !== "undefined" ? tio.identityChip : ""
+                        }
+                        DetailLine {
+                            label: window.tr("VID/PID", "VID/PID")
+                            value: typeof tio !== "undefined"
+                                  && (tio.identityVendorId.length > 0 || tio.identityProductId.length > 0)
+                                  ? tio.identityVendorId + " / " + tio.identityProductId : ""
+                            mono: true
+                        }
+                        DetailLine {
+                            label: window.tr("序列号", "Serial number")
+                            value: typeof tio !== "undefined" ? tio.identitySerial : ""
+                            mono: true
+                        }
+                        DetailLine {
+                            label: window.tr("总线", "Bus")
+                            value: typeof tio !== "undefined" ? tio.identityBus : ""
+                        }
+                        DetailLine {
+                            label: window.tr("驱动", "Driver")
+                            value: typeof tio !== "undefined" ? tio.identityDriver : ""
+                            mono: true
+                        }
+                        DetailLine {
+                            label: window.tr("位置", "Location")
+                            value: typeof tio !== "undefined" ? tio.identityLocation : ""
+                        }
+                        DetailLine {
+                            label: window.tr("实例 ID", "Instance id")
+                            value: typeof tio !== "undefined" ? tio.identity : ""
+                            mono: true
+                        }
+                        DetailLine {
+                            label: window.tr("设备状态", "Device status")
+                            value: typeof tio !== "undefined" && tio.identityProblem.length > 0
+                                  ? window.tr("Windows 报告问题码 ", "Windows reports problem code ")
+                                    + tio.identityProblem
+                                  : window.tr("正常", "no problem reported")
+                            warn: typeof tio !== "undefined" && tio.identityProblem.length > 0
                         }
                     }
                 }
@@ -349,43 +327,6 @@ Window {
                             model: typeof tio !== "undefined" ? tio.flowOptions : []
                             value: typeof tio !== "undefined" ? tio.flow : ""
                             onPicked: function (choice) { tio.setFlow(choice) }
-                        }
-                    }
-                }
-
-                // ---- control lines ----
-                GroupCard {
-                    id: linesCard
-                    title: window.tr("控制线 DTR / RTS", "Control lines DTR / RTS")
-                    collapsed: typeof tio !== "undefined" && tio.cardCollapsed(linesCard.title)
-                    onToggled: function (folded) { tio.setCardCollapsed(linesCard.title, folded) }
-                    note: window.tr("阻塞：无法提供", "blocked: cannot be offered")
-                    warn: true
-
-                    Label {
-                        Layout.fillWidth: true
-                        wrapMode: Text.WordWrap
-                        color: DesignTokens.mutedColor
-                        font.pixelSize: DesignTokens.fontCaption
-                        text: window.tr(
-                            "锁定的 tio 3.9 没有设置 DTR/RTS 的命令行选项（--help 已核对），所以这里没有可选的模式。"
-                            + "打开端口、运行、正常停止、异常退出各阶段的电平变化都还没有实测，本窗口不声称默认行为是“保持”或“安全”，"
-                            + "也不承诺打开端口不会产生控制线瞬态。",
-                            "The pinned tio 3.9 has no command-line option for DTR/RTS (checked against --help), "
-                            + "so there is no mode to choose. The levels at open, run, clean stop and abnormal exit have "
-                            + "not been measured, so this window claims neither \"held\" nor \"safe\" for the default, and "
-                            + "makes no promise that opening the port leaves the control lines free of a transient.")
-                    }
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: 8
-                        CheckBox {
-                            enabled: false
-                            text: window.tr("DTR 保持（需要实测）", "DTR held (needs measurement)")
-                        }
-                        CheckBox {
-                            enabled: false
-                            text: window.tr("RTS 保持（需要实测）", "RTS held (needs measurement)")
                         }
                     }
                 }

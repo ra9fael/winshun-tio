@@ -141,6 +141,16 @@ public:
         return m_form;
     }
 
+    // The form the settings file last recorded. The window's dirty marker is
+    // "differs from what is saved", not "differs from what is in memory": an
+    // in-memory preview (a port picked there) is not a save, and the marker
+    // must survive it.
+    Form savedForm() const
+    {
+        const std::lock_guard lock(m_mutex);
+        return m_savedForm;
+    }
+
     // Persists the form and makes it the configuration. Returns false when the
     // file could not be written; the in-memory form is still adopted, so the
     // current session keeps working.
@@ -161,14 +171,39 @@ public:
 
     // Adopts the form without writing it. Used by the search box, where each
     // parameter change is a separate action but a settings write per keystroke
-    // would be wasteful; the caller decides when to persist.
+    // would be wasteful; the caller decides when to persist. The device
+    // identity follows the port: picking another port re-reads what that device
+    // says at once, so the view never names one port with another's identity.
     void adopt(const Form& form)
     {
         Notify notify;
         {
             const std::lock_guard lock(m_mutex);
+            const Port before = m_form.parsed();
             adoptLocked(form);
             writeSettingsLocked();
+            if (portChangedLocked(before))
+                refreshIdentityLocked();
+            notify = m_notify;
+        }
+        if (notify)
+            notify();
+    }
+
+    // Adopts the form in memory only — no settings write. The window edits a
+    // copy and saves explicitly; picking a port there must still re-read the
+    // identity (capture is automatic, never a button the user must find), so
+    // the preview adopts and recaptures without persisting. The saved form is
+    // untouched, so the window's dirty marker keeps meaning "not saved yet".
+    void preview(const Form& form)
+    {
+        Notify notify;
+        {
+            const std::lock_guard lock(m_mutex);
+            const Port before = m_form.parsed();
+            adoptLocked(form);
+            if (portChangedLocked(before))
+                refreshIdentityLocked();
             notify = m_notify;
         }
         if (notify)
@@ -337,10 +372,15 @@ public:
     }
 
     // Which cards the window keeps folded. The ids are the GroupCard titles, so
-    // the list survives a restart and both faces could share it later.
-    bool cardCollapsed(const std::string& id) const
+    // the list survives a restart and both faces could share it later. A card
+    // the user has never toggled takes the `fallback` the view passes: the
+    // details card starts folded, the rest start open. Once toggled, the
+    // user's own choice wins for good — folding another card never resets it.
+    bool cardCollapsed(const std::string& id, bool fallback = false) const
     {
         const std::lock_guard lock(m_mutex);
+        if (std::find(m_touched.begin(), m_touched.end(), id) == m_touched.end())
+            return fallback;
         return std::find(m_collapsed.begin(), m_collapsed.end(), id) != m_collapsed.end();
     }
 
@@ -350,6 +390,8 @@ public:
         bool ok = false;
         {
             const std::lock_guard lock(m_mutex);
+            if (std::find(m_touched.begin(), m_touched.end(), id) == m_touched.end())
+                m_touched.push_back(id);
             const auto present = std::find(m_collapsed.begin(), m_collapsed.end(), id);
             if (collapsed && present == m_collapsed.end())
                 m_collapsed.push_back(id);
@@ -358,8 +400,12 @@ public:
             winshun::Json::Array folded;
             for (const std::string& item : m_collapsed)
                 folded.emplace_back(item);
+            winshun::Json::Array touched;
+            for (const std::string& item : m_touched)
+                touched.emplace_back(item);
             winshun::Json::Object ui;
             ui["collapsed"] = folded;
+            ui["touched"] = touched;
             object = m_persisted.isObject() ? m_persisted.toObject() : winshun::Json::Object{};
             object["ui"] = ui;
             ok = writeSettingsObjectLocked(object);
@@ -420,11 +466,19 @@ private:
             if (parsed->isObject())
                 m_persisted = *parsed;
         m_collapsed.clear();
-        if (m_persisted.has("ui") && m_persisted["ui"].isObject()
-            && m_persisted["ui"].has("collapsed") && m_persisted["ui"]["collapsed"].isArray()) {
-            for (const auto& item : m_persisted["ui"]["collapsed"].toArray())
-                if (item.isString())
-                    m_collapsed.push_back(item.toString());
+        m_touched.clear();
+        if (m_persisted.has("ui") && m_persisted["ui"].isObject()) {
+            const winshun::Json& ui = m_persisted["ui"];
+            if (ui.has("collapsed") && ui["collapsed"].isArray()) {
+                for (const auto& item : ui["collapsed"].toArray())
+                    if (item.isString())
+                        m_collapsed.push_back(item.toString());
+            }
+            if (ui.has("touched") && ui["touched"].isArray()) {
+                for (const auto& item : ui["touched"].toArray())
+                    if (item.isString())
+                        m_touched.push_back(item.toString());
+            }
         }
     }
 
@@ -479,6 +533,7 @@ private:
         // a missing value. A saved choice wins while the machine still has it.
         Backend chosen = backendFromId(setting("backend").toString());
         m_form.backend = resolveBackend(m_backends, chosen);
+        m_savedForm = m_form;
     }
 
     void adoptLocked(const Form& form)
@@ -488,6 +543,15 @@ private:
         // promise a terminal that will not start.
         if (form.backend != Backend::None || m_backends.wt || m_backends.conhost)
             m_form.backend = resolveBackend(m_backends, form.backend);
+    }
+
+    // Whether the adopted form moved to another port: the one change that makes
+    // the captured identity stale (TIO-010). A serial-parameter or backend edit
+    // says nothing new about the device, so it never triggers a re-read.
+    bool portChangedLocked(const Port& before) const
+    {
+        const Port now = m_form.parsed();
+        return now.ok() && (!before.ok() || now.com != before.com);
     }
 
     bool writeSettingsLocked()
@@ -502,7 +566,12 @@ private:
         object["stopBits"] = static_cast<long long>(m_form.serial.stopBits);
         object["flow"] = std::string(flowName(m_form.serial.flow));
         object["backend"] = std::string(backendId(m_form.backend));
-        return writeSettingsObjectLocked(object);
+        const bool written = writeSettingsObjectLocked(object);
+        // The saved form is what "dirty" is measured against, whether or not
+        // the file took the write: a failed write must not look saved.
+        if (written)
+            m_savedForm = m_form;
+        return written;
     }
 
     // One writer for every persisted shape: the form fields and the window's
@@ -621,7 +690,9 @@ private:
     std::string m_token;
     std::string m_errorCode;
     std::vector<std::string> m_collapsed; // folded card ids (TIO-008)
+    std::vector<std::string> m_touched;   // cards the user has folded/unfolded once
     std::wstring m_identity;
+    Form m_savedForm;
     std::wstring m_identityTime;
     std::wstring m_identityName;
     DeviceDetails m_identityDetails;

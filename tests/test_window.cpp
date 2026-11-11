@@ -180,21 +180,43 @@ static void testPortSelection()
     CHECK(port.value("device").toString().startsWith("/dev/ttyS"),
         "a port row shows the ttyS mapping", port.value("device").toString().toStdString());
     CHECK(!port.value("identity").toString().isEmpty(), "a port row shows the identity");
+    // What the combobox displays is the name Device Manager shows: the friendly
+    // name, which names the chip and ends in "(COMn)". It falls back to the
+    // bare COMn only when Windows reports no friendly name.
+    CHECK(!port.value("name").toString().isEmpty(), "a port row carries the friendly name");
+    CHECK(port.value("name").toString().contains(port.value("title").toString()),
+        "the friendly name carries its COMn",
+        port.value("name").toString().toStdString());
 
     const int com = port.value("com").toInt();
     model.selectPort(com);
     CHECK(model.portText() == QString("COM%1").arg(com), "the selected port is shown",
         model.portText().toStdString());
     CHECK(model.deviceText() == port.value("device").toString(), "the mapping is shown");
+    // Capture is automatic: selecting a port re-reads the identity for that
+    // port at once, and the window names the device with the name Windows
+    // gives it — never the previous port's identity (TIO-010).
+    CHECK(model.identityValid(), "a selection captures the identity");
+    CHECK(model.identity() == port.value("identity").toString(),
+        "the captured identity is the selected port's",
+        model.identity().toStdString());
     // Selecting the port that is already configured is not a change, so the form
     // stays clean; picking a different one is.
     const QVariantList all = model.ports();
     if (all.size() > 1) {
-        const int other = all.at(1).toMap().value("com").toInt();
+        const QVariantMap otherRow = all.at(1).toMap();
+        const int other = otherRow.value("com").toInt();
         model.selectPort(other);
         CHECK(model.portText() == QString("COM%1").arg(other), "another port is selectable",
             model.portText().toStdString());
         CHECK(model.dirty(), "selecting another port makes the form dirty");
+        // The identity followed the selection without any further action.
+        CHECK(model.identity() == otherRow.value("identity").toString(),
+            "picking another port recaptures its identity",
+            model.identity().toStdString());
+        CHECK(model.identityName() == otherRow.value("name").toString(),
+            "the identity names the picked device",
+            model.identityName().toStdString());
         model.selectPort(com);
     }
 

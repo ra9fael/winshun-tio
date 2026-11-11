@@ -85,7 +85,10 @@ void TioWindow::reload()
 
 void TioWindow::recomputeDirty()
 {
-    const Form saved = core().controller().form();
+    // Dirty means "differs from what the settings file records", not "differs
+    // from the controller's in-memory form": picking a port previews it in
+    // memory without saving, and that must not clear the marker.
+    const Form saved = core().controller().savedForm();
     const bool dirty = winshun::utf8(m_form.port) != winshun::utf8(saved.port)
         || m_form.serial.baudrate != saved.serial.baudrate
         || m_form.serial.dataBits != saved.serial.dataBits
@@ -135,6 +138,12 @@ QVariantList TioWindow::ports() const
     for (const PortInfo& info : snapshot.ports) {
         QVariantMap row;
         row["com"] = info.com;
+        // The name Device Manager shows under Ports (COM & LPT): the friendly
+        // name, which ends in "(COMn)". The combobox displays it; a port
+        // Windows names only by its device path falls back to the bare COMn.
+        const std::wstring name = !info.description.empty()
+            ? info.description : L"COM" + std::to_wstring(info.com);
+        row["name"] = fromStd(winshun::utf8(name));
         row["title"] = QString("COM%1").arg(info.com);
         row["device"] = fromStd(Port::devicePath(info.com - 1));
         row["identity"] = fromStd(winshun::utf8(info.instanceId));
@@ -335,9 +344,9 @@ QString TioWindow::sessionPid() const
 
 // ---- card folding (TIO-008) -------------------------------------------------------
 
-bool TioWindow::cardCollapsed(const QString& id) const
+bool TioWindow::cardCollapsed(const QString& id, bool fallback) const
 {
-    return core().controller().cardCollapsed(winshun::utf8(id.toStdWString()));
+    return core().controller().cardCollapsed(winshun::utf8(id.toStdWString()), fallback);
 }
 
 void TioWindow::setCardCollapsed(const QString& id, bool collapsed)
@@ -356,6 +365,12 @@ void TioWindow::selectPort(int com)
     if (com <= 0)
         return;
     edit([com](Form& form) { form.port = L"COM" + std::to_wstring(com); });
+    // Capture is automatic: the identity is re-read for the port just picked,
+    // in memory only (a save stays an explicit Save). The user never presses
+    // anything to learn what the device says (TIO-010).
+    core().controller().preview(m_form);
+    recomputeDirty();
+    emit changed();
 }
 
 void TioWindow::setBaudrate(const QString& rate)

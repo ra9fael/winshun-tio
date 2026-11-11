@@ -11,7 +11,7 @@ TIO-001/004/009/011: Enter on the host `tio` row opens the single launcher windo
 ```text
 + tio launcher ----------------------------------- [Close] +
 | Port [COM10________ v] [Refresh ports]                    |
-| Mapping /dev/ttyS9     Identity (Captured at [Details])    |
+| Mapping /dev/ttyS9     Port dropdown = Device Manager name (auto) |
 | Baud [____] Data bits [v] Parity [v] Stop bits [v]        |
 | Flow control [________ v]                                |
 | Lines: locked tio version ____ / default or saved setup |
@@ -62,7 +62,7 @@ TIO-007/008/013: running status does not fabricate connection status. The select
 | Component | Constraints/states | Requirements |
 |---|---|---|
 | Port input/list | Positive COMn with n-1 mapping; distinguish empty list, invalid input and removal; parsing differs from actual existence | TIO-001/004/010 |
-| Identity | Main row shows readable identity and capture time; expanded details show manufacturer, product, VID/PID, serial, bus, driver, location, instance id and Windows-reported problem code; unknown requires extra confirmation | TIO-010/013 |
+| Identity | The port dropdown shows the Device Manager friendly name; picking a port recaptures the identity automatically, with no button; the "Device details" card starts folded and shows manufacturer, product, VID/PID, serial, bus, driver, location, instance id and problem code, with the capture time in its header | TIO-010/013 |
 | Serial form | Baud/data/parity/stop/flow values supported by locked version; inline errors preserve other inputs | TIO-011 |
 | DTR/RTS | Show actual defaults on first configuration and save; reuse thereafter; explicit advanced changes only, unsupported/unknown modes unavailable, no per-launch confirmation | TIO-009 |
 | Backend | Unprobed/verified available/missing/incompatible; no automatic download | TIO-005 |

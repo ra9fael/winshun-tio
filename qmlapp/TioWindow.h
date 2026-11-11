@@ -143,7 +143,7 @@ public:
     Q_INVOKABLE void refresh();
 
     // ---- card folding (TIO-008) ----
-    Q_INVOKABLE bool cardCollapsed(const QString& id) const;
+    Q_INVOKABLE bool cardCollapsed(const QString& id, bool fallback = false) const;
     Q_INVOKABLE void setCardCollapsed(const QString& id, bool collapsed);
 
     // ---- persistence and the session ----
