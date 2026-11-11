@@ -104,156 +104,67 @@ Window {
         }
     }
 
-    // ---- session tabs: the window is session-oriented ------------------------
-    // One tab binds one port to at most one process; the cards below draw the
-    // focused tab. A new tab is created from the picker, which only offers
-    // ports no tab holds; closing refuses while the session runs.
-    RowLayout {
-        id: tabBar
-        Layout.fillWidth: true
-        spacing: 6
 
-        Repeater {
-            model: typeof tio !== "undefined" ? tio.sessions : []
+    readonly property int sessionStripHeight: 44
+    property var newSessionPorts: []
 
-            delegate: Rectangle {
-                required property var modelData
-                property bool focused: modelData.focused
+    // The picker: a menu anchored under the ＋, not a card in the page.
+    Menu {
+        id: newSessionDialog
+        width: 380
+        padding: 6
 
-                Layout.preferredHeight: sessionTabText.implicitHeight + 14
-                Layout.preferredWidth: sessionTabColumn.implicitWidth + 26
-                radius: DesignTokens.smallRadius
-                color: modelData.focused ? DesignTokens.windowColor : DesignTokens.cardColor
-                border.width: modelData.focused ? 1 : 0
-                border.color: DesignTokens.borderColor
+        background: Rectangle {
+            radius: DesignTokens.controlRadius
+            color: DesignTokens.cardColor
+            border.width: 1
+            border.color: DesignTokens.borderColor
+        }
 
-                RowLayout {
-                    id: sessionTabRow
-                    anchors.centerIn: parent
-                    spacing: 6
+        ColumnLayout {
+            width: parent.width
+            spacing: 4
 
-                    // The state dot: grey idle, green running (and busy),
-                    // red ring while the session is stopping.
-                    Rectangle {
-                        id: sessionDot
-                        width: 8
-                        height: 8
-                        radius: 4
-                        color: modelData.phase === "running" ? DesignTokens.okColor
-                             : modelData.phase === "stopping" ? DesignTokens.warnColor
-                             : DesignTokens.faintColor
+            Label {
+                Layout.fillWidth: true
+                Layout.leftMargin: 6
+                text: window.tr("新建会话：选一个没人占用的端口",
+                                "New session: pick a port nobody holds")
+                color: DesignTokens.faintColor
+                font.pixelSize: DesignTokens.fontSmall
+            }
+            Repeater {
+                model: window.newSessionPorts
+                delegate: ItemDelegate {
+                    id: newPortOption
+                    required property var modelData
+                    Layout.fillWidth: true
+                    height: DesignTokens.rowHeight + 14
+                    hoverEnabled: true
+                    background: Rectangle {
+                        radius: DesignTokens.smallRadius
+                        color: newPortOption.hovered ? DesignTokens.hoverColor : "transparent"
                     }
-
-                    ColumnLayout {
-                        id: sessionTabColumn
+                    contentItem: ColumnLayout {
                         spacing: 0
-
                         Label {
-                            id: sessionTabText
-                            text: "COM" + modelData.com
+                            text: newPortOption.modelData.name
                             color: DesignTokens.textColor
                             font.pixelSize: DesignTokens.fontCaption
-                            font.weight: modelData.focused ? Font.DemiBold : Font.Normal
+                            elide: Text.ElideRight
+                            Layout.fillWidth: true
                         }
                         Label {
-                            Layout.maximumWidth: 150
-                            text: modelData.name
+                            text: newPortOption.modelData.device + " · "
+                                  + newPortOption.modelData.identity
                             color: DesignTokens.mutedColor
                             font.pixelSize: DesignTokens.fontSmall
                             elide: Text.ElideRight
+                            Layout.fillWidth: true
                         }
                     }
-
-                    // Closing refuses while the session runs: the tab is the
-                    // only handle to its process, and the notice says so.
-                    TokenButton {
-                        text: "✕"
-                        Layout.preferredHeight: 22
-                        onClicked: {
-                            if (modelData.running || modelData.busy)
-                                footer.show(window.tr("先停止会话，再关闭这个页签",
-                                                      "Stop the session before closing its tab"))
-                            else
-                                tio.closeSession(modelData.index)
-                        }
-                    }
-                }
-
-                MouseArea {
-                    anchors.fill: parent
-                    z: -1
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: if (!modelData.focused) tio.focusSession(modelData.index)
-                }
-            }
-        }
-
-        TokenButton {
-            id: newTabButton
-            text: window.tr("＋ 新建会话", "＋ New session")
-            onClicked: {
-                // Only ports no tab holds are offered: one port, one session.
-                const held = new Set()
-                const list = typeof tio !== "undefined" ? tio.sessions : []
-                for (let i = 0; i < list.length; ++i)
-                    held.add(list[i].com)
-                const free = []
-                const ports = typeof tio !== "undefined" ? tio.ports : []
-                for (let i = 0; i < ports.length; ++i)
-                    if (!held.has(ports[i].com))
-                        free.push(ports[i])
-                newSessionPorts = free
-                if (free.length > 0) {
-                    newSessionCombo.currentIndex = 0
-                    newSessionDialog.open()
-                } else {
-                    footer.show(window.tr("没有空闲端口：每个会话占用一个端口",
-                                          "no free port: every session holds one"))
-                }
-            }
-        }
-    }
-
-    property var newSessionPorts: []
-
-    Dialog {
-        id: newSessionDialog
-        modal: true
-        anchors.centerIn: parent
-        title: window.tr("新建会话", "New session")
-        standardButtons: Dialog.NoButton
-        width: 460
-
-        ColumnLayout {
-            spacing: 12
-            Label {
-                Layout.fillWidth: true
-                wrapMode: Text.WordWrap
-                color: DesignTokens.textColor
-                text: window.tr("选一个还没被占用的端口；参数先沿用保存的配置，开起来前随时可改。",
-                                "Pick a port no session holds; the parameters start from the saved configuration and stay editable until launch.")
-            }
-            TokenComboBox {
-                id: newSessionCombo
-                Layout.fillWidth: true
-                model: window.newSessionPorts
-                textRole: "name"
-                valueRole: "com"
-            }
-            RowLayout {
-                Layout.alignment: Qt.AlignRight
-                spacing: 8
-                TokenButton {
-                    text: window.tr("取消", "Cancel")
-                    onClicked: newSessionDialog.close()
-                }
-                TokenButton {
-                    text: window.tr("创建会话", "Create session")
                     onClicked: {
-                        if (newSessionCombo.currentIndex >= 0) {
-                            const row = window.newSessionPorts[newSessionCombo.currentIndex]
-                            tio.newSession(row.com)
-                        }
+                        tio.newSession(newPortOption.modelData.com)
                         newSessionDialog.close()
                     }
                 }
@@ -264,6 +175,157 @@ Window {
     ColumnLayout {
         anchors.fill: parent
         spacing: 0
+
+    // ---- session tab strip: browser-style; the ＋ and its picker live here ----
+    // One tab binds one port to at most one process; the pane below draws the
+    // focused tab. The ＋ opens a dropdown of the ports nobody holds, anchored
+    // under the strip — never a card at the bottom of the page. Closing
+    // refuses while the session runs: the tab is the only handle to it.
+    RowLayout {
+        id: tabBar
+        Layout.fillWidth: true
+        Layout.leftMargin: DesignTokens.pad
+        Layout.rightMargin: DesignTokens.pad
+        Layout.topMargin: 6
+        spacing: 4
+
+        Repeater {
+            model: typeof tio !== "undefined" ? tio.sessions : []
+
+            delegate: Rectangle {
+                required property var modelData
+
+                Layout.preferredHeight: sessionTabColumn.implicitHeight + 18
+                Layout.preferredWidth: sessionTabColumn.implicitWidth
+                    + closeGlyph.implicitWidth + 40
+                radius: DesignTokens.smallRadius
+                color: modelData.focused ? DesignTokens.cardColor : "transparent"
+                border.width: modelData.focused ? 1 : 0
+                border.color: DesignTokens.borderColor
+
+                // The active underline, the way a browser tab marks itself.
+                Rectangle {
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.bottom: parent.bottom
+                    height: 2
+                    visible: modelData.focused
+                    color: DesignTokens.accentColor
+                }
+
+                RowLayout {
+                    anchors.centerIn: parent
+                    spacing: 8
+
+                    Rectangle {
+                        id: sessionDot
+                        width: 7
+                        height: 7
+                        radius: 3.5
+                        color: modelData.phase === "running" ? DesignTokens.okColor
+                             : modelData.phase === "stopping" ? DesignTokens.warnColor
+                             : DesignTokens.faintColor
+                    }
+
+                    ColumnLayout {
+                        id: sessionTabColumn
+                        spacing: 0
+
+                        RowLayout {
+                            spacing: 6
+                            Label {
+                                text: "COM" + modelData.com
+                                color: DesignTokens.textColor
+                                font.pixelSize: DesignTokens.fontCaption
+                                font.weight: modelData.focused ? Font.DemiBold : Font.Normal
+                            }
+                            // Closing refuses while the session runs; the
+                            // notice names the reason.
+                            Label {
+                                id: closeGlyph
+                                text: "✕"
+                                color: DesignTokens.mutedColor
+                                font.pixelSize: DesignTokens.fontSmall
+
+                                MouseArea {
+                                    anchors.fill: parent
+                                    anchors.margins: -4
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: {
+                                        if (modelData.running || modelData.busy)
+                                            footer.show(window.tr(
+                                                "先停止会话，再关闭这个页签",
+                                                "Stop the session before closing its tab"))
+                                        else
+                                            tio.closeSession(modelData.index)
+                                    }
+                                }
+                            }
+                        }
+                        Label {
+                            Layout.maximumWidth: 150
+                            text: modelData.name
+                            color: DesignTokens.mutedColor
+                            font.pixelSize: DesignTokens.fontSmall
+                            elide: Text.ElideRight
+                        }
+                    }
+                }
+
+                MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: if (!modelData.focused) tio.focusSession(modelData.index)
+                }
+            }
+        }
+
+        Item { Layout.fillWidth: true }
+
+        // The ＋: a plain glyph button whose dropdown lists the free ports,
+        // anchored right here under the strip.
+        Item {
+            id: plusItem
+            Layout.preferredWidth: plusGlyph.implicitWidth + 16
+            Layout.preferredHeight: sessionStripHeight
+
+            Label {
+                id: plusGlyph
+                anchors.centerIn: parent
+                text: "＋"
+                color: DesignTokens.mutedColor
+                font.pixelSize: DesignTokens.fontBody
+
+                MouseArea {
+                    anchors.fill: parent
+                    anchors.margins: -6
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: {
+                        // Only ports no tab holds are offered.
+                        const held = new Set()
+                        const list = typeof tio !== "undefined" ? tio.sessions : []
+                        for (let i = 0; i < list.length; ++i)
+                            held.add(list[i].com)
+                        const free = []
+                        const ports = typeof tio !== "undefined" ? tio.ports : []
+                        for (let i = 0; i < ports.length; ++i)
+                            if (!held.has(ports[i].com))
+                                free.push(ports[i])
+                        newSessionPorts = free
+                        if (free.length === 0) {
+                            footer.show(window.tr("没有空闲端口：每个会话占用一个端口",
+                                                  "no free port: every session holds one"))
+                            return
+                        }
+                        // Anchor the picker under the ＋, wherever the strip is.
+                        const mapped = plusItem.mapToItem(window.contentItem, 0, 0)
+                        newSessionDialog.popup(window.contentItem, mapped.x,
+                            mapped.y + plusItem.height + 4)
+                    }
+                }
+            }
+        }
+    }
 
         // ---- the scrolling body --------------------------------------------------
         ScrollView {
@@ -292,27 +354,32 @@ Window {
                           ? window.tr("进程在跑；端口状态未知直到 tio 自己给出证据", "the process runs; the port state is unknown until tio proves it")
                           : ""
 
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: 8
-
+                    // The session's own actions, right in the title row: the
+                    // state below is what they act on, never a separate
+                    // button strip drifting under the card.
+                    headerExtra: [
+                        TokenButton {
+                            text: window.tr("保存配置", "Save")
+                            enabled: typeof tio !== "undefined" && tio.dirty
+                            onClicked: tio.save()
+                        },
                         TokenButton {
                             text: window.tr("启动", "Launch")
                             enabled: typeof tio !== "undefined" && tio.canLaunch && !tio.sessionActive
                             onClicked: tio.launch()
-                        }
+                        },
                         TokenButton {
                             text: window.tr("停止", "Stop")
                             enabled: typeof tio !== "undefined" && tio.sessionActive
                             onClicked: tio.stop()
-                        }
+                        },
                         TokenButton {
                             text: window.tr("重启", "Restart")
                             enabled: typeof tio !== "undefined" && tio.sessionActive
                             onClicked: tio.restart()
-                        }
+                        },
                         TokenButton {
-                            text: window.tr("克隆会话", "Clone session")
+                            text: window.tr("克隆", "Clone")
                             enabled: typeof tio !== "undefined" && tio.sessions.length > 0
                                      && tio.sessions.length < tio.ports.length
                             onClicked: {
@@ -322,7 +389,7 @@ Window {
                                         tio.cloneSession(i)
                             }
                         }
-                    }
+                    ]
 
                     GridLayout {
                         columns: 2
@@ -723,6 +790,9 @@ Window {
                 anchors.margins: 8
                 spacing: 6
 
+                // The footer is status only: the session's Launch/Stop/Restart
+                // live in the session card's header, and Save lives beside them
+                // there too — actions never sit in two places.
                 RowLayout {
                     Layout.fillWidth: true
                     spacing: 8
@@ -743,17 +813,6 @@ Window {
                         text: window.tr("保存配置", "Save")
                         enabled: typeof tio !== "undefined" && tio.dirty
                         onClicked: tio.save()
-                    }
-                    TokenButton {
-                        text: window.tr("启动", "Launch")
-                        enabled: typeof tio !== "undefined" && tio.canLaunch && !tio.sessionActive
-                        highlighted: true
-                        onClicked: tio.launch()
-                    }
-                    TokenButton {
-                        text: window.tr("停止", "Stop")
-                        enabled: typeof tio !== "undefined" && tio.sessionActive
-                        onClicked: tio.stop()
                     }
                 }
 

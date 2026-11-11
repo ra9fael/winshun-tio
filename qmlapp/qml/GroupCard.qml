@@ -16,6 +16,10 @@ Rectangle {
     property bool collapsible: true
     property bool collapsed: false
     default property alias content: body.data
+    // Extra content in the header, after the note: a card's own actions live
+    // here (right-aligned), so a session card's buttons sit in its title row
+    // instead of drifting to a button row below.
+    property alias headerExtra: headerExtraHost.data
 
     signal toggled(bool collapsed)
 
@@ -66,6 +70,10 @@ Rectangle {
                     color: card.warn ? DesignTokens.warnColor : DesignTokens.mutedColor
                     font.pixelSize: DesignTokens.fontSmall
                     elide: Text.ElideRight
+                }
+                RowLayout {
+                    id: headerExtraHost
+                    spacing: 8
                 }
             }
 
