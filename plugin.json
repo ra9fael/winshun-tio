@@ -6,7 +6,6 @@
     "zh": "tio 串口终端",
     "en": "tio serial terminal"
   },
-  "icon": "app.ico",
   "version": "0.1.0",
   "description": {
     "zh": "用嵌入包的 tio 打开串口终端：在搜索框里就地设置端口、波特率、数据位、校验、停止位和流控，Enter 启动、再 Enter 停止；也可开独立窗口配置。终端由 Windows Terminal 或 conhost 提供，插件本身不读取、不显示、不记录任何串口内容。",
@@ -44,6 +43,7 @@
         "zh": "tio 串口",
         "en": "tio serial"
       },
+      "icon": "glyph:U+E9D9",
       "hint": {
         "zh": "Enter 启动，再 Enter 停止；参数行 Enter 就地修改",
         "en": "Enter starts, Enter again stops; Enter on a parameter edits it in place"
