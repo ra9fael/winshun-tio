@@ -1,0 +1,49 @@
+{
+  "package": "3.9-3",
+  "source": "https://repo.msys2.org/msys/x86_64/tio-3.9-3-x86_64.pkg.tar.zst",
+  "sourceSha256": "01029a45605add22b81d2fb18a19b7db86f99631b431d909d062b7b3cda4fcac",
+  "arch": "x86_64",
+  "license": "GPL-2.0-or-later",
+  "files": [
+    {
+      "path": "runtime/msys-2.0.dll",
+      "sha256": "d5983eccf5ac3340bc35774f68e576ea1735eb01e7a7578d9bfb30e8b065a5e2",
+      "bytes": 3393153
+    },
+    {
+      "path": "runtime/msys-gcc_s-seh-1.dll",
+      "sha256": "38118e2bb6231318025efdfd8fc836baa6697e0e9ec9f9ac25deddcdda4bd136",
+      "bytes": 144609
+    },
+    {
+      "path": "runtime/msys-glib-2.0-0.dll",
+      "sha256": "19ce0ad8b2b98100a832bda973e062750fa3da6360321b5442ed58f28b8cf7c0",
+      "bytes": 1300209
+    },
+    {
+      "path": "runtime/msys-iconv-2.dll",
+      "sha256": "50012969ed96a5232220185d2fc1ac1e3abe5790f6b3027f4fc3c4cad3fd38f0",
+      "bytes": 1103690
+    },
+    {
+      "path": "runtime/msys-intl-8.dll",
+      "sha256": "50f7de0c712d867ddca2c9eb8562ca6ee2d69e120e798ec6126ad29dd1ed5402",
+      "bytes": 111181
+    },
+    {
+      "path": "runtime/msys-lua-5.5.dll",
+      "sha256": "48aabb6694e56d04f9953f28066ba63bdaa79495cb9a864f9a3eb497e14d0855",
+      "bytes": 254120
+    },
+    {
+      "path": "runtime/msys-pcre2-8-0.dll",
+      "sha256": "709737df8708749e1615a8ed8a6459e54298b6e80ee57a8995371bf5765e951c",
+      "bytes": 443825
+    },
+    {
+      "path": "runtime/tio.exe",
+      "sha256": "a39c99f2d4cbbc4cf7e6cd5a685b464f359636594037693ec22410fb7002baee",
+      "bytes": 168542
+    }
+  ]
+}

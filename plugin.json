@@ -1,0 +1,168 @@
+{
+  "$schema": "https://raw.githubusercontent.com/LingCore/WinShun-plugins/main/schema/plugin.schema.json",
+  "manifest": 1,
+  "id": "ra9fael.tio",
+  "name": {
+    "zh": "tio 串口终端",
+    "en": "tio serial terminal"
+  },
+  "icon": "app.ico",
+  "version": "0.1.0",
+  "description": {
+    "zh": "用嵌入包的 tio 打开串口终端：在搜索框里就地设置端口、波特率、数据位、校验、停止位和流控，Enter 启动、再 Enter 停止；也可开独立窗口配置。终端由 Windows Terminal 或 conhost 提供，插件本身不读取、不显示、不记录任何串口内容。",
+    "en": "Open a serial terminal with the bundled tio: set the port, baud rate, data bits, parity, stop bits and flow control in place in the search box, Enter starts and Enter again stops, or configure in a standalone window. Windows Terminal or conhost provides the terminal; the plugin never reads, renders or logs serial content."
+  },
+  "author": "ra9fael",
+  "homepage": "https://github.com/ra9fael/winshun-tio",
+  "license": "MIT",
+  "minWinShun": "0.22.0",
+  "permissions": [
+    "processes",
+    "ui"
+  ],
+  "runtime": {
+    "mode": "resident",
+    "program": "tio.exe",
+    "qt": "host",
+    "qtVersion": "6.12.0",
+    "sandbox": "normal",
+    "start": "lazy",
+    "timeoutMs": 1500,
+    "memoryMB": 128,
+    "idleExitSec": 0,
+    "encoding": "utf-8"
+  },
+  "commands": [
+    {
+      "id": "tio",
+      "keyword": [
+        "tio",
+        "串口",
+        "serial"
+      ],
+      "title": {
+        "zh": "tio 串口",
+        "en": "tio serial"
+      },
+      "hint": {
+        "zh": "Enter 启动，再 Enter 停止；参数行 Enter 就地修改",
+        "en": "Enter starts, Enter again stops; Enter on a parameter edits it in place"
+      },
+      "actions": [
+        {
+          "id": "launch",
+          "title": {
+            "zh": "启动",
+            "en": "Launch"
+          },
+          "key": "Enter"
+        },
+        {
+          "id": "openWindow",
+          "title": {
+            "zh": "打开独立窗口",
+            "en": "Open window"
+          },
+          "key": "Ctrl+Enter"
+        },
+        {
+          "id": "copyDiagnostics",
+          "title": {
+            "zh": "复制诊断",
+            "en": "Copy diagnostics"
+          },
+          "key": "Shift+Enter"
+        }
+      ],
+      "ai": {
+        "description": "Configure and launch the bundled tio serial terminal. Rows show the port (COMn and its /dev/ttyS(n-1) mapping), baud rate, data bits, parity, stop bits, flow control and the terminal backend (Windows Terminal first, conhost as the fallback). Enter on the launch row starts tio after six pre-launch checks; Enter again stops the session this plugin started. Parameter rows edit in place. A started process is not a connected port: the plugin never reads serial data and never claims the port is open."
+      }
+    }
+  ],
+  "settings": [
+    {
+      "key": "port",
+      "type": "text",
+      "title": {
+        "zh": "默认端口",
+        "en": "Default port"
+      },
+      "hint": {
+        "zh": "COMn，映射到 /dev/ttyS(n-1)；留空用本机第一个端口。在搜索框或窗口里改过之后以那里为准",
+        "en": "COMn, mapped to /dev/ttyS(n-1); empty uses the machine's first port. Once changed in the search box or the window, that wins"
+      },
+      "default": ""
+    },
+    {
+      "key": "baudrate",
+      "type": "number",
+      "title": {
+        "zh": "默认波特率",
+        "en": "Default baud rate"
+      },
+      "hint": {
+        "zh": "tio 3.9 支持的正整数，默认 115200",
+        "en": "A positive rate tio 3.9 supports, default 115200"
+      },
+      "default": 115200
+    },
+    {
+      "key": "dataBits",
+      "type": "choice",
+      "title": {
+        "zh": "默认数据位",
+        "en": "Default data bits"
+      },
+      "options": ["5", "6", "7", "8"],
+      "default": "8"
+    },
+    {
+      "key": "parity",
+      "type": "choice",
+      "title": {
+        "zh": "默认校验",
+        "en": "Default parity"
+      },
+      "options": ["none", "even", "odd", "mark", "space"],
+      "default": "none"
+    },
+    {
+      "key": "stopBits",
+      "type": "choice",
+      "title": {
+        "zh": "默认停止位",
+        "en": "Default stop bits"
+      },
+      "options": ["1", "2"],
+      "default": "1"
+    },
+    {
+      "key": "flow",
+      "type": "choice",
+      "title": {
+        "zh": "默认流控",
+        "en": "Default flow control"
+      },
+      "hint": {
+        "zh": "hard 时 RTS 由流控管理，不承诺固定电平",
+        "en": "with hard flow the RTS follows the flow, not a fixed level"
+      },
+      "options": ["none", "hard", "soft"],
+      "default": "none"
+    },
+    {
+      "key": "backend",
+      "type": "choice",
+      "title": {
+        "zh": "终端后端",
+        "en": "Terminal backend"
+      },
+      "hint": {
+        "zh": "auto 优先 wt.exe，没有则 conhost；选了这台机器没有的后端会被忽略",
+        "en": "auto prefers wt.exe and falls back to conhost; a backend this machine lacks is ignored"
+      },
+      "options": ["auto", "wt", "conhost"],
+      "default": "auto"
+    }
+  ]
+}
