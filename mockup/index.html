@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>tio 串口终端 — 交互稿（端口下拉 + 自动采集）</title>
+<title>tio 串口终端 — 多会话交互稿（会话导向）</title>
 <style>
 /* Design tokens mirror WinShun's nativeLook contract (DesignTokens.qml /
    ThemeBridge.cpp fallbacks) so the QML build can lift them verbatim. */
@@ -15,14 +15,14 @@
 html[data-theme="light"]{
   --window:#f7f7f7; --card:#ffffff; --sunken:#f0f0f0; --border:#e2e2e2;
   --text:#1b1b1b; --subtext:#6b6b6b; --faint:#8a8a8a;
-  --accent:#0f6cbd; --accent-text:#ffffff; --warn:#9d5d00; --danger:#c42b1c;
+  --accent:#0f6cbd; --accent-text:#ffffff; --warn:#9d5d00; --danger:#c42b1c; --ok:#0f7b0f;
   --hover:rgba(0,0,0,.04); --control:#ffffff; --control-border:#d5d5d5;
   --shadow:0 2px 6px rgba(20,20,30,.08),0 12px 32px rgba(20,20,30,.10);
 }
 html[data-theme="dark"]{
   --window:#1f1f1f; --card:#2b2b2b; --sunken:#232323; --border:#3a3a3a;
   --text:#f2f2f2; --subtext:#a0a0a0; --faint:#8a8a8a;
-  --accent:#4cc2ff; --accent-text:#0b2739; --warn:#fce100; --danger:#ff99a4;
+  --accent:#4cc2ff; --accent-text:#0b2739; --warn:#fce100; --danger:#ff99a4; --ok:#6ccb5f;
   --hover:rgba(255,255,255,.06); --control:#373737; --control-border:#444444;
   --shadow:0 2px 8px rgba(0,0,0,.5),0 16px 40px rgba(0,0,0,.45);
 }
@@ -40,16 +40,36 @@ body{margin:0;padding:28px 16px;background:#6b6b76;font-family:var(--font);
   background:#2b2b2b;color:#eee;padding:2px 6px}
 
 /* ---- the window ---------------------------------------------------------- */
-.window{width:780px;max-width:100%;height:720px;background:var(--window);color:var(--text);
+.window{width:860px;max-width:100%;height:760px;background:var(--window);color:var(--text);
   border:1px solid var(--border);border-radius:var(--r-card);box-shadow:var(--shadow);
   display:flex;flex-direction:column;overflow:hidden}
-.titlebar{display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--card);
+.titlebar{display:flex;align-items:center;gap:8px;padding:9px 12px;background:var(--card);
   border-bottom:1px solid var(--border)}
 .titlebar .glyph{width:16px;height:16px;border-radius:4px;background:var(--accent);
   display:grid;place-items:center;color:#fff;font-size:10px;font-weight:700}
 .titlebar h1{font-size:12.5px;font-weight:600;margin:0}
+.titlebar .win-title{font-size:12.5px;color:var(--subtext);margin-left:6px}
 .titlebar .btns{margin-left:auto;display:flex;gap:14px;color:var(--subtext)}
-.body{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:12px}
+
+/* ---- session tab bar ------------------------------------------------------ */
+.tabs{display:flex;align-items:center;gap:4px;padding:6px 10px 0;background:var(--card);
+  border-bottom:1px solid var(--border);overflow-x:auto}
+.tab{display:flex;align-items:center;gap:7px;padding:7px 12px 8px;cursor:pointer;
+  border:1px solid transparent;border-bottom:none;border-radius:var(--r-ctl) var(--r-ctl) 0 0;
+  color:var(--subtext);white-space:nowrap;position:relative;top:1px;user-select:none}
+.tab:hover{background:var(--hover);color:var(--text)}
+.tab.active{background:var(--window);border-color:var(--border);color:var(--text);font-weight:600}
+.tab .dot{width:7px;height:7px;border-radius:50%;flex:none}
+.dot.idle{background:var(--faint)} .dot.starting,.dot.running{background:var(--ok)}
+.dot.stopping{background:var(--warn)}
+.dot.cap{box-shadow:0 0 0 2px var(--window),0 0 0 3.5px var(--danger)}
+.tab .t1{font-size:12px} .tab .t2{font-size:10px;color:var(--subtext);max-width:150px;
+  overflow:hidden;text-overflow:ellipsis}
+.tab .close{border:none;background:transparent;color:var(--subtext);font-size:12px;
+  padding:0 2px;cursor:pointer;border-radius:3px}
+.tab .close:hover{color:var(--danger)}
+.tab.new{border-style:dashed;color:var(--subtext);font-size:12px;padding:7px 12px}
+.body{flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:12px}
 .body::-webkit-scrollbar{width:10px}
 .body::-webkit-scrollbar-thumb{background:var(--border);border-radius:5px}
 
@@ -60,21 +80,23 @@ body{margin:0;padding:28px 16px;background:#6b6b76;font-family:var(--font);
 .card .head .note{font-size:11px;color:var(--subtext)}
 .card .head .chip{font-size:10.5px;color:var(--subtext);background:var(--sunken);
   border-radius:999px;padding:1px 8px;margin-left:auto}
+.card.locked .chip{color:var(--warn)}
 .row{display:flex;align-items:center;gap:10px}
 .row .lbl{width:84px;flex:none;font-size:11px;color:var(--subtext)}
 .row .hint{font-size:11px;color:var(--subtext);margin-top:2px}
-.warn-text{color:var(--warn)}
+.warn-text{color:var(--warn)} .ok-text{color:var(--ok)} .danger-text{color:var(--danger)}
 
 button{font:inherit;font-size:12.5px;color:var(--text);background:var(--control);
   border:1px solid var(--control-border);border-radius:var(--r-ctl);padding:6px 14px;
   cursor:pointer;transition:background .12s,border-color .12s}
-button:hover{background:var(--hover)}
+button:hover:not(:disabled){background:var(--hover)}
 button:focus-visible,select:focus-visible,[role="option"]:focus-visible,
-.segment button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.segment button:focus-visible,.tab:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 button.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-text);font-weight:600}
+button.stop{color:var(--danger);border-color:var(--danger)}
 button:disabled{opacity:.45;cursor:not-allowed}
 
-/* combobox, Device-Manager style */
+/* port selector: full-width combobox, refresh on its own row (not cramped) */
 .combo{position:relative;flex:1}
 .combo>button.selector{width:100%;display:flex;align-items:center;gap:8px;
   height:32px;padding:0 10px;text-align:left}
@@ -93,8 +115,8 @@ button:disabled{opacity:.45;cursor:not-allowed}
 .combo [role="option"] .s{display:block;font-size:10.5px;color:var(--subtext);
   font-family:var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
-/* device details: a fold card; capture is automatic, the fold only hides */
-.details{display:none;flex-direction:column;gap:4px;margin-top:8px;
+/* device details fold card */
+.details{display:none;flex-direction:column;gap:4px;margin-top:4px;
   border-top:1px solid var(--border);padding-top:8px}
 .details.open{display:flex}
 .head.fold{cursor:pointer;border-radius:var(--r-small)}
@@ -114,20 +136,54 @@ button:disabled{opacity:.45;cursor:not-allowed}
   padding:5px 0;font-size:12px;color:var(--text)}
 .segment button[aria-pressed="true"]{background:var(--card);font-weight:600;
   box-shadow:0 1px 2px rgba(0,0,0,.18)}
+.segment.disabled{opacity:.5;pointer-events:none}
 
-textarea{font:inherit;font-family:var(--mono);font-size:11px;color:var(--text);
-  background:var(--sunken);border:1px solid var(--border);border-radius:var(--r-ctl);
-  width:100%;min-height:72px;padding:8px;resize:vertical}
+/* capture permission bar */
+.permbar{display:flex;gap:10px;align-items:center;background:var(--sunken);
+  border:1px solid var(--warn);border-radius:var(--r-ctl);padding:8px 10px;font-size:11.5px}
+.permbar .t{flex:1;color:var(--text)}
+
+/* terminal preview */
+.term{background:var(--sunken);border:1px solid var(--border);border-radius:var(--r-ctl);
+  font-family:var(--mono);font-size:11.5px;color:var(--text);padding:10px;
+  height:150px;overflow-y:auto;white-space:pre-wrap;word-break:break-all}
+.term .in{color:var(--accent)} .term .sys{color:var(--faint)}
+.termbar{display:flex;gap:8px;align-items:center}
+.termbar .stats{font-size:11px;color:var(--subtext);flex:1}
 
 .footer{display:flex;align-items:center;gap:10px;padding:10px 16px;background:var(--card);
   border-top:1px solid var(--border)}
 .footer .status{flex:1;font-size:11px;color:var(--subtext)}
 .backend{display:flex;gap:10px;align-items:center;padding:6px 8px;border-radius:var(--r-small)}
 .backend.cur{background:var(--sunken)}
-.backend .t{font-size:12.5px}
-.backend .s{font-size:10.5px;color:var(--subtext)}
+.backend .t{font-size:12.5px} .backend .s{font-size:10.5px;color:var(--subtext)}
 .backend .tag{font-size:10px;border:1px solid currentColor;border-radius:999px;padding:0 6px;margin-left:auto}
 .backend .tag.ok{color:var(--accent)} .backend .tag.no{color:var(--danger)}
+
+/* package integrity: third-party rows with verifiable links */
+.pkglist{display:flex;flex-direction:column;gap:6px;font-size:11.5px}
+.pkgrow{display:grid;grid-template-columns:170px 1fr auto;gap:4px 10px;
+  padding:6px 8px;border:1px solid var(--border);border-radius:var(--r-small);align-items:baseline}
+.pkgrow .n{font-weight:600} .pkgrow .n .v{font-weight:400;color:var(--subtext);font-size:10.5px}
+.pkgrow .why{grid-column:2/4;color:var(--subtext);font-size:10.5px}
+.pkgrow .lics{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+a.pkglink,a.lic{color:var(--accent);text-decoration:none;border-bottom:1px dotted currentColor;
+  font-size:11px;white-space:nowrap}
+a.pkglink:hover,a.lic:hover{border-bottom-style:solid}
+a.src{color:var(--accent);text-decoration:none;border-bottom:1px dotted currentColor;font-size:11px}
+a.src:hover{border-bottom-style:solid}
+.pkgrow .tag{font-size:10px;border:1px solid currentColor;border-radius:999px;padding:0 6px;
+  color:var(--subtext);white-space:nowrap;justify-self:end}
+.pkgrow .tag.nb{color:var(--warn)}
+
+/* new-session picker */
+.newpanel{display:none;flex-direction:column;gap:10px;border-top:1px dashed var(--border);
+  padding-top:10px}
+.newpanel.open{display:flex}
+.toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);background:var(--text);
+  color:var(--window);font-size:12px;border-radius:999px;padding:6px 16px;opacity:0;
+  transition:opacity .25s;pointer-events:none;z-index:9}
+.toast.show{opacity:.92}
 </style>
 </head>
 <body>
@@ -137,66 +193,55 @@ textarea{font:inherit;font-family:var(--mono);font-size:11px;color:var(--text);
   <label>主题 <select id="demo-theme"><option value="light">浅色</option><option value="dark">深色</option></select></label>
   <label>语言 <select id="demo-lang"><option value="zh">中文</option><option value="en">English</option></select></label>
   <label>演示状态 <select id="demo-state">
-    <option value="ok">正常</option>
-    <option value="collecting">采集中…</option>
-    <option value="removed">端口已拔出</option>
-    <option value="swapped">设备被替换（同 COM 号）</option>
+    <option value="keep">跟随页签</option>
+    <option value="idle">全部空闲</option>
+    <option value="capturing">当前会话捕获中</option>
+    <option value="removed">当前端口已拔出</option>
   </select></label>
 </div>
 
 <div class="window">
   <div class="titlebar">
     <span class="glyph">t</span>
-    <h1 data-i18n="title">tio 串口终端</h1>
+    <h1 data-i18n="app">tio 串口终端</h1>
+    <span class="win-title" id="win-sub"></span>
     <span class="btns"><span>—</span><span>▢</span><span>✕</span></span>
   </div>
 
+  <!-- ---- session tabs: the window is session-oriented ---- -->
+  <div class="tabs" id="tabs" role="tablist"></div>
+
   <div class="body">
-    <!-- ---- 端口 ---- -->
+    <!-- ---- 会话 ---- -->
     <section class="card">
-      <div class="head"><h2 data-i18n="groupPort">端口</h2>
-        <span class="chip" id="port-chip">COM8</span></div>
+      <div class="head"><h2 data-i18n="groupSession">会话</h2>
+        <span class="note" id="sess-state-note"></span>
+        <span class="chip" id="sess-chip"></span></div>
+      <div class="row"><span class="lbl" data-i18n="phase">阶段</span><span class="hint" id="sess-phase"></span></div>
+      <div class="row"><span class="lbl" data-i18n="portState">端口状态</span><span class="hint warn-text" id="sess-port"></span></div>
+      <div class="row" style="justify-content:flex-end">
+        <button class="primary" id="btn-launch" data-i18n="launch">启动</button>
+        <button class="stop" id="btn-stop" data-i18n="stop">停止</button>
+        <button id="btn-restart" data-i18n="restart">重启</button>
+        <button id="btn-clone" data-i18n="clone">克隆会话</button>
+      </div>
+    </section>
+
+    <!-- ---- 端口与参数 ---- -->
+    <section class="card" id="port-card">
+      <div class="head"><h2 data-i18n="groupPort">端口与参数</h2>
+        <span class="chip" id="port-lock" hidden data-i18n="locked">会话运行中 · 锁定</span></div>
       <div class="row">
-        <span class="lbl" data-i18n="port">端口</span>
         <div class="combo" id="combo">
           <button class="selector" id="combo-btn" aria-haspopup="listbox" aria-expanded="false">
-            <span class="sel-name" id="combo-sel">Silicon Labs CP210x USB to UART Bridge (COM8)</span>
-            <span class="caret" aria-hidden="true"></span>
-          </button>
+            <span class="sel-name" id="combo-sel"></span><span class="caret"></span></button>
           <div class="list" role="listbox" id="combo-list"></div>
         </div>
+      </div>
+      <div class="row">
+        <span class="hint" id="device-hint" style="flex:1"></span>
         <button id="btn-refresh" data-i18n="refresh">刷新</button>
       </div>
-      <div class="row"><span class="lbl"></span>
-        <span class="hint" id="device-hint">/dev/ttyS7</span></div>
-    </section>
-
-    <!-- ---- 设备详情：自动采集，可折叠 ---- -->
-    <section class="card">
-      <div class="head fold" id="details-head" role="button" tabindex="0" aria-expanded="false">
-        <span class="chev" id="details-chev" aria-hidden="true">▸</span>
-        <h2 data-i18n="groupDetails">设备详情</h2>
-        <span class="note"><span data-i18n="captured">采集于</span> <span id="id-time">14:18:04</span>
-          <span class="busy" id="id-busy" hidden data-i18n="collecting">采集中…</span></span>
-      </div>
-      <span class="hint warn-text" id="id-missing" hidden data-i18n="idMissing">身份未知：只能确认当前端口</span>
-      <div class="details" id="details">
-        <div class="dline"><span class="k" data-i18n="kMfr">厂商</span><span class="v plain" id="d-mfr">Silicon Labs</span></div>
-        <div class="dline"><span class="k" data-i18n="kChip">产品</span><span class="v plain" id="d-chip">CP2102 USB to UART Bridge Controller</span></div>
-        <div class="dline"><span class="k">VID/PID</span><span class="v" id="d-vidpid">10C4 / EA60</span></div>
-        <div class="dline" id="line-serial"><span class="k" data-i18n="kSerial">序列号</span><span class="v" id="d-serial">0001</span></div>
-        <div class="dline"><span class="k" data-i18n="kBus">总线</span><span class="v plain" id="d-bus">USB</span></div>
-        <div class="dline"><span class="k" data-i18n="kDriver">驱动</span><span class="v" id="d-driver">11.4.0.393</span></div>
-        <div class="dline"><span class="k" data-i18n="kLocation">位置</span><span class="v plain" id="d-location">Port_#0002.Hub_#0006</span></div>
-        <div class="dline"><span class="k" data-i18n="kInstance">实例 ID</span><span class="v" id="d-instance">USB\VID_10C4&amp;PID_EA60\0001</span></div>
-        <div class="dline"><span class="k" data-i18n="kStatus">设备状态</span><span class="v plain" id="d-status" data-i18n="okState">正常</span></div>
-      </div>
-    </section>
-
-    <!-- ---- 串口参数 ---- -->
-    <section class="card">
-      <div class="head"><h2 data-i18n="groupSerial">串口参数</h2>
-        <span class="note" data-i18n="serialNote">只列 tio 3.9 接受的取值</span></div>
       <div class="row"><span class="lbl" data-i18n="baud">波特率</span>
         <div class="combo" id="baud-combo">
           <button class="selector" id="baud-btn" aria-haspopup="listbox" aria-expanded="false">
@@ -216,28 +261,89 @@ textarea{font:inherit;font-family:var(--mono);font-size:11px;color:var(--text);
         <span class="hint" data-i18n="flowHint">hard 时 RTS 由流控管理，不承诺固定电平</span></div>
     </section>
 
+    <!-- ---- 捕获：新能力，明确的权限边界 ---- -->
+    <section class="card">
+      <div class="head"><h2 data-i18n="groupCapture">会话捕获</h2>
+        <span class="note" id="cap-note"></span>
+        <span class="chip" id="cap-chip" data-i18n="capOff">未捕获</span></div>
+      <div class="permbar" id="permbar" hidden>
+        <span class="t" data-i18n="permText">捕获会读取串口收发的全部字节，并保留在本机。这打破了插件「不读取串口内容」的默认边界：需要新的 serial:read 权限，且只对这一个会话生效，可随时关闭。</span>
+        <button class="primary" id="perm-yes" data-i18n="permAllow">允许本会话捕获</button>
+        <button id="perm-no" data-i18n="permDeny">暂不</button>
+      </div>
+      <div class="row"><span class="lbl" data-i18n="capture">捕获</span>
+        <button id="btn-capture" data-i18n="capStart">开始捕获</button>
+        <span class="hint" id="cap-stats"></span></div>
+      <div class="term" id="term"></div>
+      <div class="termbar">
+        <span class="stats" data-i18n="capPrivacy">捕获内容只留在本机内存与导出文件；上传、遥测均不存在。</span>
+        <button id="btn-copy" data-i18n="copyAll">复制全部</button>
+        <button id="btn-save" data-i18n="saveText">另存为文本</button>
+        <button id="btn-script" data-i18n="saveScript">导出重放脚本</button>
+        <button id="btn-clear" data-i18n="clear">清屏</button>
+      </div>
+    </section>
+
+    <!-- ---- 设备详情 ---- -->
+    <section class="card">
+      <div class="head fold" id="details-head" role="button" tabindex="0" aria-expanded="false">
+        <span class="chev" id="details-chev" aria-hidden="true">▸</span>
+        <h2 data-i18n="groupDetails">设备详情</h2>
+        <span class="note"><span data-i18n="captured">采集于</span> <span id="id-time"></span>
+          <span class="busy" id="id-busy" hidden data-i18n="collecting">采集中…</span></span>
+      </div>
+      <span class="hint warn-text" id="id-missing" hidden data-i18n="idMissing">身份未知：只能确认当前端口</span>
+      <div class="details" id="details">
+        <div class="dline"><span class="k" data-i18n="kMfr">厂商</span><span class="v plain" id="d-mfr"></span></div>
+        <div class="dline"><span class="k" data-i18n="kChip">产品</span><span class="v plain" id="d-chip"></span></div>
+        <div class="dline"><span class="k">VID/PID</span><span class="v" id="d-vidpid"></span></div>
+        <div class="dline" id="line-serial"><span class="k" data-i18n="kSerial">序列号</span><span class="v" id="d-serial"></span></div>
+        <div class="dline"><span class="k" data-i18n="kBus">总线</span><span class="v plain" id="d-bus"></span></div>
+        <div class="dline"><span class="k" data-i18n="kDriver">驱动</span><span class="v" id="d-driver"></span></div>
+        <div class="dline"><span class="k" data-i18n="kLocation">位置</span><span class="v plain" id="d-location"></span></div>
+        <div class="dline"><span class="k" data-i18n="kInstance">实例 ID</span><span class="v" id="d-instance"></span></div>
+        <div class="dline"><span class="k" data-i18n="kStatus">设备状态</span><span class="v plain" id="d-status"></span></div>
+      </div>
+    </section>
+
+    <!-- ---- 新建会话 ---- -->
+    <section class="card" id="new-card">
+      <div class="head"><h2 data-i18n="newSession">新建会话</h2>
+        <span class="note" data-i18n="newNote">选一个还没被占用的端口</span></div>
+      <div class="newpanel" id="newpanel">
+        <div class="combo" id="new-combo">
+          <button class="selector" id="new-btn" aria-haspopup="listbox" aria-expanded="false">
+            <span class="sel-name" id="new-sel"></span><span class="caret"></span></button>
+          <div class="list" role="listbox" id="new-list"></div>
+        </div>
+        <div class="row" style="justify-content:flex-end">
+          <button id="new-cancel" data-i18n="cancel">取消</button>
+          <button class="primary" id="new-create" data-i18n="create">创建会话</button>
+        </div>
+      </div>
+    </section>
+
     <!-- ---- 后端 ---- -->
     <section class="card">
       <div class="head"><h2 data-i18n="groupBackend">终端后端</h2></div>
-      <div class="backend cur" id="bk-wt"><span class="t">Windows Terminal</span>
+      <div class="backend cur"><span class="t">Windows Terminal</span>
         <span class="s">1.25.2733.0</span><span class="tag ok" data-i18n="bkOk">可用</span></div>
-      <div class="backend" id="bk-con"><span class="t">conhost</span>
+      <div class="backend"><span class="t">conhost</span>
         <span class="s" data-i18n="bkOwned">tio 是我们创建的子进程：停止可靠</span>
         <span class="tag ok" data-i18n="bkOk">可用</span></div>
     </section>
 
-    <!-- ---- 包完整性 ---- -->
+    <!-- ---- 包完整性：第三方文件与来源，全部可查 ---- -->
     <section class="card">
       <div class="head"><h2 data-i18n="groupPackage">包完整性</h2>
-        <span class="chip">0.1.0</span></div>
-      <span class="hint" data-i18n="pkgOk">有效 · 每个文件与清单一致</span>
-    </section>
-
-    <!-- ---- 会话 ---- -->
-    <section class="card">
-      <div class="head"><h2 data-i18n="groupSession">会话状态</h2></div>
-      <div class="row"><span class="lbl" data-i18n="phase">阶段</span><span class="hint" id="sess-phase" data-i18n="phIdle">未运行</span></div>
-      <div class="row"><span class="lbl" data-i18n="portState">端口状态</span><span class="hint warn-text" data-i18n="psUnknown">未知</span></div>
+        <span class="chip">0.1.0 · tio 3.9-3</span></div>
+      <span class="hint ok-text" data-i18n="pkgOk">有效 · 每个文件都与清单一致</span>
+      <span class="hint" data-i18n="pkgIntro">包里带的是上游 tio 与它真正导入的 MSYS2 运行时；每行给出来源、许可证和原文，点开可查。</span>
+      <div class="pkglist" id="pkglist"></div>
+      <div class="row" style="justify-content:flex-end">
+        <a class="pkglink" href="https://github.com/ra9fael/winshun-tio/blob/main/THIRD_PARTY.md" target="_blank" rel="noopener" data-i18n="tpDoc">完整第三方说明</a>
+        <a class="pkglink" href="https://github.com/ra9fael/winshun-tio/blob/main/manifest/files.json" target="_blank" rel="noopener" data-i18n="manifestLink">逐文件清单 manifest</a>
+      </div>
     </section>
 
     <!-- ---- 诊断 ---- -->
@@ -248,19 +354,18 @@ textarea{font:inherit;font-family:var(--mono);font-size:11px;color:var(--text);
 package   : 0.1.0
 integrity : valid
 backend   : wt 1.25.2733.0 · conhost
-privacy   : no serial payload</textarea>
+capture   : off (serial content never read unless a session capture is on)
+privacy   : captured bytes stay local; no upload, no telemetry</textarea>
       <div class="row" style="justify-content:flex-end">
         <button data-i18n="copyDiag">复制诊断</button></div>
     </section>
   </div>
 
   <div class="footer">
-    <span class="status" id="foot">终端由 Windows Terminal 或 conhost 提供；插件不读取、不显示、不记录串口内容。</span>
-    <button data-i18n="save">保存配置</button>
-    <button class="primary" data-i18n="launch">启动</button>
-    <button disabled data-i18n="stop">停止</button>
+    <span class="status" id="foot"></span>
   </div>
 </div>
+<div class="toast" id="toast"></div>
 
 <script>
 "use strict";
@@ -279,176 +384,317 @@ const PORTS = [
 ];
 
 const I18N = {
-  zh:{ title:"tio 串口终端", groupPort:"端口", port:"端口", refresh:"刷新",
+  zh:{ app:"tio 串口终端", groupSession:"会话", phase:"阶段", portState:"端口状态",
+    launch:"启动", stop:"停止", restart:"重启", clone:"克隆会话",
+    groupPort:"端口与参数", locked:"会话运行中 · 锁定", refresh:"刷新",
+    baud:"波特率", dataBits:"数据位", parity:"校验", stopBits:"停止位", flow:"流控",
+    flowHint:"hard 时 RTS 由流控管理，不承诺固定电平",
+    groupCapture:"会话捕获", capOff:"未捕获", capOn:"捕获中", capStart:"开始捕获",
+    capStop:"停止捕获", permText:"捕获会读取串口收发的全部字节，并保留在本机。这打破了插件「不读取串口内容」的默认边界：需要新的 serial:read 权限，且只对这一个会话生效，可随时关闭。",
+    permAllow:"允许本会话捕获", permDeny:"暂不", copyAll:"复制全部",
+    saveText:"另存为文本", saveScript:"导出重放脚本", clear:"清屏",
+    capPrivacy:"捕获内容只留在本机内存与导出文件；上传、遥测均不存在。",
     groupDetails:"设备详情", captured:"采集于", collecting:"采集中…",
     idMissing:"身份未知：只能确认当前端口",
     kMfr:"厂商", kChip:"产品", kSerial:"序列号", kBus:"总线", kDriver:"驱动",
-    kLocation:"位置", kInstance:"实例 ID", kStatus:"设备状态",
-    okState:"正常", problemState:"Windows 报告问题码 ",
-    groupSerial:"串口参数", serialNote:"只列 tio 3.9 接受的取值",
-    baud:"波特率", dataBits:"数据位", parity:"校验", stopBits:"停止位", flow:"流控",
-    flowHint:"hard 时 RTS 由流控管理，不承诺固定电平",
+    kLocation:"位置", kInstance:"实例 ID", kStatus:"设备状态", okState:"正常",
+    newSession:"新建会话", newNote:"选一个还没被占用的端口", cancel:"取消", create:"创建会话",
     groupBackend:"终端后端", bkOk:"可用", bkOwned:"tio 是我们创建的子进程：停止可靠",
-    groupPackage:"包完整性", pkgOk:"有效 · 每个文件与清单一致",
-    groupSession:"会话状态", phase:"阶段", portState:"端口状态", psUnknown:"未知", phIdle:"未运行",
+    groupPackage:"包完整性", pkgOk:"有效 · 每个文件都与清单一致",
+    pkgIntro:"包里带的是上游 tio 与它真正导入的 MSYS2 运行时；每行给出来源、许可证和原文，点开可查。",
+    tpDoc:"完整第三方说明", manifestLink:"逐文件清单 manifest",
+    licText:"许可证原文", srcText:"来源", notBundled:"不随包",
+    whyTio:"就是这个程序", whyRuntime:"tio.exe 的 PE import：MSYS/POSIX 层本身",
+    whyGlib:"tio 及其运行库的 PE import（GLib/iconv/pcre2/lua/intl）",
+    whyGcc:"msys-2.0.dll 的 PE import（异常展开）",
+    whySelf:"本插件的引导器与窗口",
+    whyWt:"只调用机器上已装的，不把「本机存在」当成「可再分发」",
+    whyQt:"用 Win顺 宿主的共享 Qt（qt: host），包内不混入另一版",
+    whyPhos:"图标字形来源；包里只有生成产物（app.ico、icons/app-*.png）",
     groupDiag:"诊断", diagNote:"不含串口内容", copyDiag:"复制诊断",
-    save:"保存配置", launch:"启动", stop:"停止",
-    foot:"终端由 Windows Terminal 或 conhost 提供；插件不读取、不显示、不记录串口内容。",
-    nonePort:"（无可用端口）", chip:"COM",
-    removedNote:"这个端口不在了：重新选择或刷新", swappedNote:"同一 COM 号上是另一台设备：身份已重新采集" },
-  en:{ title:"tio serial terminal", groupPort:"Port", port:"Port", refresh:"Refresh",
+    stIdle:"未运行", stStarting:"启动中…", stRunning:"运行中", stStopping:"停止中…",
+    psUnknown:"未知", psOpen:"已打开（tio 报告）", copied:"已复制到剪贴板", saved:"已导出",
+    capNeedRun:"捕获在会话运行时才有内容", footIdle:"终端由 Windows Terminal 或 conhost 提供。捕获关闭时不读取任何串口内容。",
+    footCap:"正在捕获 {name} 的串口内容：字节只留在本机。", removed:"这个端口不在了",
+    closeAsk:"会话还在运行，确定关闭这个页签？", yes:"关闭会话", no:"取消",
+    inUse:"这个端口已经在别的会话里", newTitle:"新会话" },
+  en:{ app:"tio serial terminal", groupSession:"Session", phase:"Phase", portState:"Port state",
+    launch:"Launch", stop:"Stop", restart:"Restart", clone:"Clone session",
+    groupPort:"Port & parameters", locked:"session running · locked", refresh:"Refresh",
+    baud:"Baud rate", dataBits:"Data bits", parity:"Parity", stopBits:"Stop bits", flow:"Flow control",
+    flowHint:"with hard flow the RTS follows the flow, not a fixed level",
+    groupCapture:"Session capture", capOff:"not capturing", capOn:"capturing", capStart:"Start capture",
+    capStop:"Stop capture", permText:"Capture reads every byte the session sends and receives, kept on this machine. It breaks the plugin's default \"serial content is never read\" boundary: a new serial:read permission is required, it applies to this session only, and it can be turned off at any time.",
+    permAllow:"Allow capture for this session", permDeny:"Not now", copyAll:"Copy all",
+    saveText:"Save as text", saveScript:"Export replay script", clear:"Clear",
+    capPrivacy:"Captured bytes stay in local memory and exported files; no upload, no telemetry.",
     groupDetails:"Device details", captured:"Captured at", collecting:"Collecting…",
     idMissing:"unknown: only the current port is confirmed",
     kMfr:"Manufacturer", kChip:"Product", kSerial:"Serial number", kBus:"Bus", kDriver:"Driver",
-    kLocation:"Location", kInstance:"Instance id", kStatus:"Device status",
-    okState:"no problem reported", problemState:"Windows reports problem code ",
-    groupSerial:"Serial parameters", serialNote:"only the values tio 3.9 takes",
-    baud:"Baud rate", dataBits:"Data bits", parity:"Parity", stopBits:"Stop bits", flow:"Flow control",
-    flowHint:"with hard flow the RTS follows the flow, not a fixed level",
+    kLocation:"Location", kInstance:"Instance id", kStatus:"Device status", okState:"no problem reported",
+    newSession:"New session", newNote:"pick a port no session holds", cancel:"Cancel", create:"Create session",
     groupBackend:"Terminal backend", bkOk:"available", bkOwned:"tio is the child process we create: Stop is reliable",
     groupPackage:"Package integrity", pkgOk:"valid · every file matches the manifest",
-    groupSession:"Session state", phase:"Phase", portState:"Port state", psUnknown:"unknown", phIdle:"not running",
+    pkgIntro:"The package ships upstream tio plus the MSYS2 runtime it really imports; each row links its source, licence and licence text for verification.",
+    tpDoc:"Full third-party notes", manifestLink:"per-file manifest",
+    licText:"licence text", srcText:"source", notBundled:"not bundled",
+    whyTio:"the program itself", whyRuntime:"a PE import of tio.exe: the MSYS/POSIX layer itself",
+    whyGlib:"PE imports of tio and its runtime (GLib/iconv/pcre2/lua/intl)",
+    whyGcc:"a PE import of msys-2.0.dll (exception unwinding)",
+    whySelf:"the launcher and the window of this plugin",
+    whyWt:"only the machine's own install is called; \"installed here\" is never taken as \"redistributable\"",
+    whyQt:"the host's shared Qt is used (qt: host); no second Qt ships inside the package",
+    whyPhos:"glyph source for the icons; only generated artefacts ship (app.ico, icons/app-*.png)",
     groupDiag:"Diagnostics", diagNote:"never serial content", copyDiag:"Copy diagnostics",
-    save:"Save settings", launch:"Launch", stop:"Stop",
-    foot:"Windows Terminal or conhost provides the terminal; the plugin never reads, renders or logs serial content.",
-    nonePort:"(no port)", chip:"COM",
-    removedNote:"this port is gone: pick another or refresh", swappedNote:"another device now sits on this COM number: the identity was recaptured" }
+    stIdle:"not running", stStarting:"starting…", stRunning:"running", stStopping:"stopping…",
+    psUnknown:"unknown", psOpen:"open (reported by tio)", copied:"copied to clipboard", saved:"exported",
+    capNeedRun:"capture has content while the session runs", footIdle:"Windows Terminal or conhost provides the terminal. With capture off, no serial byte is read.",
+    footCap:"Capturing serial content of {name}: bytes stay on this machine.", removed:"this port is gone",
+    closeAsk:"The session is still running. Close this tab anyway?", yes:"Close session", no:"Cancel",
+    inUse:"that port is already held by another session", newTitle:"New session" }
 };
 
-const $ = id => document.getElementById(id);
-let lang = "zh", current = 0, detailsOpen = false, collectTimer = null;
+const RATES = [9600,19200,38400,57600,115200,230400,460800,921600,1500000];
+const SEGS = [
+  { id:"seg-data", key:"dataBits", values:["5","6","7","8"] },
+  { id:"seg-parity", key:"parity", values:["none","even","odd","mark","space"] },
+  { id:"seg-stop", key:"stopBits", values:["1","2"] },
+  { id:"seg-flow", key:"flow", values:["none","hard","soft"] }
+];
 
+const $ = id => document.getElementById(id);
+let lang = "zh", activeId = 0, nextId = 3, detailsOpen = false, collectTimer = null, capTimer = null;
 const t = k => I18N[lang][k];
-const esc = s => s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+const esc = s => String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
 const clock = () => new Date().toTimeString().slice(0,8);
 
-function applyLang(){
-  document.documentElement.lang = lang;
-  document.querySelectorAll("[data-i18n]").forEach(el => { el.textContent = t(el.dataset.i18n); });
-  renderCombo(); renderIdentity(current, false); renderSegments();
+/* ---- sessions: the window's first-class objects ---- */
+const SESSIONS = [
+  { id:0, com:8, state:"running", capture:"on", permitted:true, pid:18216,
+    params:{ baud:115200, dataBits:"8", parity:"none", stopBits:"1", flow:"none" },
+    started:clock(), lines:[
+      { cls:"sys", text:"[tio 3.9 · /dev/ttyS7 · 115200 8n1 · Windows Terminal]" },
+      { cls:"", text:"Silicon Labs CP210x bridge ready." },
+      { cls:"in", text:"> version" },
+      { cls:"", text:"1.4.2" } ] },
+  { id:1, com:9, state:"idle", capture:"off", permitted:false, pid:0,
+    params:{ baud:9600, dataBits:"8", parity:"none", stopBits:"1", flow:"none" },
+    started:null, lines:[] }
+];
+const active = () => SESSIONS.find(s => s.id === activeId);
+const portOf = s => PORTS.find(p => p.com === s.com);
+
+/* ---- tabs ---- */
+function renderTabs(){
+  $("tabs").innerHTML = SESSIONS.map(s => {
+    const p = portOf(s);
+    const cap = s.capture === "on" ? " cap" : "";
+    return `<div class="tab ${s.id===activeId?"active":""}" role="tab" tabindex="0" data-id="${s.id}"
+        aria-selected="${s.id===activeId}">
+      <span class="dot ${s.state}${cap}"></span>
+      <span><span class="t1">COM${s.com}</span><br><span class="t2">${esc(p?p.name:"?")}</span></span>
+      <button class="close" data-close="${s.id}" title="${esc(t("stop"))}">✕</button>
+    </div>`;
+  }).join("") +
+  `<button class="tab new" id="tab-new" data-i18n="newSession">${esc(t("newSession"))} +</button>`;
+  $("tabs").querySelectorAll(".tab[data-id]").forEach(el => {
+    el.onclick = e => { if (!e.target.closest(".close")) switchTo(+el.dataset.id); };
+    el.onkeydown = e => { if (e.key === "Enter") switchTo(+el.dataset.id); };
+  });
+  $("tabs").querySelectorAll("[data-close]").forEach(b => {
+    b.onclick = e => { e.stopPropagation(); closeSession(+b.dataset.close); };
+  });
+  $("tab-new").onclick = () => { renderNewPanel(); $("newpanel").classList.add("open");
+    $("new-card").scrollIntoView({behavior:"smooth", block:"center"}); };
 }
 
-/* ---- port combobox: what Device Manager shows ---- */
-function renderCombo(){
-  $("combo-list").innerHTML = PORTS.map((p,i) => `
-    <div role="option" tabindex="0" data-i="${i}" class="${i===current?"cur":""}">
+/* ---- new session picker ---- */
+function renderNewPanel(){
+  const free = PORTS.filter(p => !SESSIONS.some(s => s.com === p.com));
+  $("new-list").innerHTML = free.length ? free.map(p =>
+    `<div role="option" tabindex="0" data-com="${p.com}">
       <span class="n">${esc(p.name)}</span>
-      <span class="s">${esc(p.device)} · ${esc(p.identity)}</span>
-    </div>`).join("");
-  $("combo-sel").textContent = PORTS[current].name;
-  $("port-chip").textContent = "COM" + PORTS[current].com;
-  $("device-hint").textContent = PORTS[current].device;
+      <span class="s">${esc(p.device)} · ${esc(p.identity)}</span></div>`).join("")
+    : `<div class="hint">${esc(t("inUse"))}</div>`;
+  $("new-sel").textContent = free.length ? free[0].name : t("inUse");
+  $("new-list").querySelectorAll("[data-com]").forEach(el => {
+    el.onclick = () => { $("new-sel").textContent =
+      PORTS.find(p => p.com === +el.dataset.com).name;
+      $("new-btn").dataset.com = el.dataset.com; };
+  });
+  $("new-btn").dataset.com = free.length ? free[0].com : "";
 }
+$("new-cancel").onclick = () => $("newpanel").classList.remove("open");
+$("new-create").onclick = () => {
+  const com = +$("new-btn").dataset.com;
+  if (!com) return;
+  const s = { id:nextId++, com, state:"idle", capture:"off", permitted:false, pid:0,
+    params:{ baud:115200, dataBits:"8", parity:"none", stopBits:"1", flow:"none" },
+    started:null, lines:[{ cls:"sys", text:`[${t("newTitle")} · COM${com}]` }] };
+  SESSIONS.push(s); switchTo(s.id);
+  $("newpanel").classList.remove("open"); toast(t("saved"));
+};
 
-/* ---- AUTOMATIC capture: selection re-reads the identity at once ---- */
-function renderIdentity(index, recapture){
+/* ---- session lifecycle (simulated) ---- */
+function switchTo(id){ activeId = id; renderAll(); }
+function closeSession(id){
+  const s = SESSIONS.find(x => x.id === id);
+  if (s.state === "running" && !confirm(t("closeAsk"))) return;
+  SESSIONS.splice(SESSIONS.indexOf(s), 1);
+  if (!SESSIONS.length){ SESSIONS.push({ id:nextId++, com:PORTS[0].com, state:"idle",
+    capture:"off", permitted:false, pid:0,
+    params:{ baud:115200, dataBits:"8", parity:"none", stopBits:"1", flow:"none" },
+    started:null, lines:[] }); }
+  if (activeId === id) activeId = SESSIONS[0].id;
+  renderAll();
+}
+$("btn-launch").onclick = () => {
+  const s = active(); if (s.state !== "idle") return;
+  s.state = "starting"; renderAll();
+  setTimeout(() => { s.state = "running"; s.pid = 10000 + Math.floor(Math.random()*9000);
+    s.started = clock();
+    s.lines.push({cls:"sys", text:`[tio 3.9 · ${portOf(s).device} · ${s.params.baud} 8${s.params.dataBits}${s.params.parity[0]}${s.params.stopBits}]`});
+    renderAll(); }, 700);
+};
+$("btn-stop").onclick = () => {
+  const s = active(); if (s.state !== "running" && s.state !== "starting") return;
+  s.state = "stopping"; renderAll();
+  setTimeout(() => { s.state = "idle"; s.pid = 0; s.started = null;
+    s.lines.push({cls:"sys", text:"[session stopped · exit 0]"}); renderAll(); }, 600);
+};
+$("btn-restart").onclick = () => { if (active().state !== "idle") $("btn-stop").onclick(); setTimeout(()=>$("btn-launch").onclick(), 700); };
+$("btn-clone").onclick = () => {
+  const s = active();
+  if (SESSIONS.some(x => x.com === s.com)) { toast(t("inUse")); return; }
+  SESSIONS.push({ id:nextId++, com:s.com, state:"idle", capture:"off", permitted:false,
+    pid:0, params:{...s.params}, started:null, lines:[] });
+  switchTo(SESSIONS.at(-1).id);
+};
+
+/* ---- port selector (full width; per session) ---- */
+function renderCombo(){
+  const s = active();
+  $("combo-list").innerHTML = PORTS.map(p => {
+    const used = SESSIONS.some(x => x.com === p.com && x.id !== s.id);
+    return `<div role="option" tabindex="0" data-com="${p.com}" class="${p.com===s.com?"cur":""}">
+      <span class="n">${esc(p.name)}${used?` <b class="warn-text">· ${esc(t("inUse"))}</b>`:""}</span>
+      <span class="s">${esc(p.device)} · ${esc(p.identity)}</span></div>`;
+  }).join("");
+  $("combo-sel").textContent = portOf(s).name;
+  $("device-hint").textContent = `${portOf(s).device} · ${portOf(s).identity}`;
+}
+function pickPort(com){
+  const s = active();
+  if (s.state !== "idle"){ toast(t("locked")); return; }
+  if (SESSIONS.some(x => x.com === com && x.id !== s.id)){ toast(t("inUse")); return; }
+  s.com = com; renderAll(); renderIdentity(true);   // automatic recapture
+}
+$("combo-btn").onclick = () => $("combo").classList.toggle("open");
+document.addEventListener("click", e => {
+  if (!$("combo").contains(e.target)) $("combo").classList.remove("open");
+  if (!$("baud-combo").contains(e.target)) $("baud-combo").classList.remove("open");
+  if (!$("new-combo").contains(e.target)) $("new-combo").classList.remove("open");
+});
+$("combo-list").onclick = e => {
+  const o = e.target.closest("[data-com]");
+  if (o){ $("combo").classList.remove("open"); pickPort(+o.dataset.com); }
+};
+$("btn-refresh").onclick = () => renderIdentity(true);
+
+/* ---- identity: automatic, per active session ---- */
+function renderIdentity(recapture){
+  const s = active(), p = portOf(s);
   const busy = $("id-busy"), missing = $("id-missing");
   if (recapture){
     busy.hidden = false; missing.hidden = true;
     $("id-time").textContent = "…";
     clearTimeout(collectTimer);
-    // A short simulated delay stands in for the SetupAPI read.
-    collectTimer = setTimeout(() => { busy.hidden = true; fill(p0()); }, 450);
+    collectTimer = setTimeout(() => { busy.hidden = true; fill(p); }, 450);
     return;
   }
-  busy.hidden = true; missing.hidden = true;
-  fill(PORTS[index]);
+  busy.hidden = true; missing.hidden = true; fill(p);
 }
-const p0 = () => PORTS[current];
 function fill(p){
   $("id-time").textContent = clock();
-  $("d-mfr").textContent = p.mfr;
-  $("d-chip").textContent = p.chip;
+  $("d-mfr").textContent = p.mfr; $("d-chip").textContent = p.chip;
   $("d-vidpid").textContent = p.vid + " / " + p.pid;
   $("d-serial").textContent = p.serial ?? "";
-  // A fact the device does not report hides its whole row: an empty row would
-  // read as "the device has no serial", which is a different claim.
   $("line-serial").style.display = p.serial ? "" : "none";
-  $("d-bus").textContent = p.bus;
-  $("d-driver").textContent = p.driver;
-  $("d-location").textContent = p.location;
-  $("d-instance").textContent = p.identity;
-  $("d-status").textContent = p.problem ? t("problemState") + p.problem : t("okState");
+  $("d-bus").textContent = p.bus; $("d-driver").textContent = p.driver;
+  $("d-location").textContent = p.location; $("d-instance").textContent = p.identity;
+  $("d-status").textContent = p.problem ? t("kStatus") + ": " + p.problem : t("okState");
 }
 
-function selectPort(i){
-  if (i === current) { $("combo").classList.remove("open"); return; }
-  current = i;
-  $("combo").classList.remove("open");
-  $("combo-btn").setAttribute("aria-expanded","false");
-  renderCombo();
-  renderIdentity(current, true);   // automatic: no button to press
+/* ---- capture: the new capability, with an explicit permission gate ---- */
+function renderCapture(){
+  const s = active();
+  const on = s.capture === "on";
+  $("cap-chip").textContent = on ? t("capOn") : t("capOff");
+  $("cap-chip").style.color = on ? "var(--danger)" : "";
+  $("btn-capture").textContent = on ? t("capStop") : t("capStart");
+  $("btn-capture").disabled = s.state !== "running" && !on;
+  $("cap-note").textContent = s.state === "running" ? "" : t("capNeedRun");
+  const bytes = s.lines.reduce((n,l) => n + l.text.length, 0);
+  $("cap-stats").textContent = on
+    ? `${s.lines.length} ln · ${bytes} B · ${s.started ?? ""}` : "";
+  $("permbar").hidden = s.permitted || on;
+  renderTerm(s);
 }
-
-/* ---- demo states ---- */
-function demoState(s){
-  if (s === "collecting"){ renderIdentity(current, true); return; }
-  if (s === "removed"){
-    $("id-missing").hidden = false; $("id-busy").hidden = true;
-    $("foot").textContent = t("removedNote"); return;
-  }
-  if (s === "swapped"){
-    const p = {...PORTS[current], name:"USB Serial Device (COM9)", mfr:"Microsoft",
-      chip:"TinyUSB Device", vid:"2E8A", pid:"4031", serial:null,
-      identity:"USB\\VID_2E8A&PID_4031\\7&2ABD1C3&0&0000"};
-    fill(p);
-    $("foot").textContent = t("swappedNote"); return;
-  }
-  $("foot").textContent = t("foot");
-  renderIdentity(current, false);
+function renderTerm(s){
+  $("term").innerHTML = s.lines.map(l =>
+    `<span class="${l.cls}">${esc(l.text)}\n</span>`).join("") || `<span class="sys">${esc(t("capNeedRun"))}</span>`;
+  $("term").scrollTop = $("term").scrollHeight;
 }
-
-/* ---- combobox interaction ---- */
-$("combo-btn").onclick = () => {
-  const open = $("combo").classList.toggle("open");
-  $("combo-btn").setAttribute("aria-expanded", String(open));
+$("btn-capture").onclick = () => {
+  const s = active();
+  if (!s.permitted){ $("permbar").hidden = false; return; }   // permission first
+  s.capture = s.capture === "on" ? "off" : "on";
+  if (s.capture === "on"){
+    s.lines.push({cls:"sys", text:"[capture on: bytes stay on this machine]"});
+    clearInterval(capTimer);
+    capTimer = setInterval(() => {
+      const cur = active();
+      if (cur.state !== "running" || cur.capture !== "on"){ clearInterval(capTimer); return; }
+      cur.lines.push({cls:"", text:`RX ${Math.floor(Math.random()*0xFFFF).toString(16).padStart(4,"0")} · sensor frame ok`});
+      if (Math.random() < 0.25) cur.lines.push({cls:"in", text:"> read temp"});
+      renderCapture();
+    }, 1200);
+  } else clearInterval(capTimer);
+  renderAll();
 };
-document.addEventListener("click", e => {
-  if (!$("combo").contains(e.target)) $("combo").classList.remove("open");
-  if (!$("baud-combo").contains(e.target)) $("baud-combo").classList.remove("open");
-});
-$("combo-list").onclick = e => {
-  const opt = e.target.closest("[role='option']");
-  if (opt) selectPort(+opt.dataset.i);
-};
-$("combo-list").onkeydown = e => {
-  const opt = e.target.closest("[role='option']");
-  if (opt && e.key === "Enter"){ e.preventDefault(); selectPort(+opt.dataset.i); }
-};
+$("perm-yes").onclick = () => { const s = active(); s.permitted = true;
+  $("permbar").hidden = true; toast(t("permAllow")); };
+$("perm-no").onclick = () => { $("permbar").hidden = true; };
 
-/* ---- baud dropdown (closed list, same look) ---- */
-const RATES = [9600,19200,38400,57600,115200,230400,460800,921600,1500000];
-let rate = 115200;
-function renderBaud(){
-  $("baud-list").innerHTML = RATES.map(r =>
-    `<div role="option" tabindex="0" data-r="${r}" class="${r===rate?"cur":""}"><span class="n">${r}</span></div>`).join("");
-  $("baud-sel").textContent = rate;
+/* ---- capture actions ---- */
+function download(name, text){
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([text], {type:"text/plain"}));
+  a.download = name; a.click(); URL.revokeObjectURL(a.href);
 }
-$("baud-btn").onclick = () => $("baud-combo").classList.toggle("open");
-$("baud-list").onclick = e => {
-  const opt = e.target.closest("[role='option']");
-  if (opt){ rate = +opt.dataset.r; $("baud-combo").classList.remove("open"); renderBaud(); }
-};
-
-/* ---- segmented radios ---- */
-const SEGMENTS = [
-  { id:"seg-data", key:"dataBits", values:["5","6","7","8"], pick:"8" },
-  { id:"seg-parity", key:"parity", values:["none","even","odd","mark","space"], pick:"none" },
-  { id:"seg-stop", key:"stopBits", values:["1","2"], pick:"1" },
-  { id:"seg-flow", key:"flow", values:["none","hard","soft"], pick:"none" }
-];
-function renderSegments(){
-  for (const seg of SEGMENTS){
-    const el = $(seg.id);
-    el.innerHTML = seg.values.map(v =>
-      `<button aria-pressed="${v===seg.pick}" data-v="${v}">${v}</button>`).join("");
-    el.querySelectorAll("button").forEach(b => {
-      b.onclick = () => { seg.pick = b.dataset.v; renderSegments(); };
-    });
-  }
+function sessionText(s){
+  return s.lines.map(l => l.text).join("\n") + "\n";
 }
+$("btn-copy").onclick = async () => {
+  try { await navigator.clipboard.writeText(sessionText(active())); }
+  catch { const ta = document.createElement("textarea"); ta.value = sessionText(active());
+    document.body.appendChild(ta); ta.select(); document.execCommand("copy"); ta.remove(); }
+  toast(t("copied"));
+};
+$("btn-save").onclick = () => {
+  const s = active();
+  download(`tio-session-com${s.com}-${Date.now()}.log`, sessionText(s)); toast(t("saved"));
+};
+$("btn-script").onclick = () => {
+  const s = active();
+  const ins = s.lines.filter(l => l.cls === "in").map(l => l.text.replace(/^>\s?/, ""));
+  const body = ["# replay script generated by ra9fael.tio — review before running!",
+    `# session COM${s.com} · ${portOf(s).device}`, ...ins.map(l => `echo ${JSON.stringify(l)}`)].join("\n");
+  download(`tio-replay-com${s.com}.sh`, body + "\n"); toast(t("saved"));
+};
+$("btn-clear").onclick = () => { active().lines = []; renderCapture(); };
 
-/* ---- details fold: display only, capture is never behind it ---- */
+/* ---- details fold ---- */
 function setDetailsOpen(open){
   detailsOpen = open;
   $("details").classList.toggle("open", detailsOpen);
@@ -460,15 +706,147 @@ $("details-head").onkeydown = e => {
   if (e.key === "Enter" || e.key === " "){ e.preventDefault(); setDetailsOpen(!detailsOpen); }
 };
 
-/* ---- refresh re-enumerates and recaptures ---- */
-$("btn-refresh").onclick = () => renderIdentity(current, true);
+/* ---- session card + lock ---- */
+function renderSessionCard(){
+  const s = active(), p = portOf(s);
+  const running = s.state === "running" || s.state === "starting" || s.state === "stopping";
+  $("sess-phase").textContent = t("st" + s.state);
+  $("sess-port").textContent = s.state === "running" ? t("psUnknown") : t("psUnknown");
+  $("sess-state-note").textContent = running ? `${p.name}` : "";
+  $("sess-chip").textContent = s.pid ? "PID " + s.pid : "COM" + s.com;
+  $("btn-launch").disabled = s.state !== "idle";
+  $("btn-stop").disabled = s.state === "idle";
+  $("btn-restart").disabled = s.state === "idle";
+  const locked = s.state !== "idle";
+  $("port-lock").hidden = !locked;
+  $("port-card").classList.toggle("locked", locked);
+  $("port-card").querySelectorAll(".segment").forEach(el =>
+    el.classList.toggle("disabled", locked));
+  $("combo-btn").disabled = locked;
+  $("baud-btn").disabled = locked;
+}
+
+/* ---- baud + segments (per session) ---- */
+function renderBaud(){
+  const s = active();
+  $("baud-list").innerHTML = RATES.map(r =>
+    `<div role="option" tabindex="0" data-r="${r}" class="${r===s.params.baud?"cur":""}">
+      <span class="n">${r}</span></div>`).join("");
+  $("baud-sel").textContent = s.params.baud;
+  $("baud-list").querySelectorAll("[data-r]").forEach(el => {
+    el.onclick = () => { if (active().state === "idle"){
+      active().params.baud = +el.dataset.r; renderBaud(); } };
+  });
+}
+$("baud-btn").onclick = () => $("baud-combo").classList.toggle("open");
+function renderSegments(){
+  const s = active();
+  for (const seg of SEGS){
+    const el = $(seg.id);
+    el.innerHTML = seg.values.map(v =>
+      `<button aria-pressed="${v===s.params[seg.key]}" data-v="${v}">${v}</button>`).join("");
+    el.querySelectorAll("button").forEach(b => {
+      b.onclick = () => { if (active().state === "idle"){
+        active().params[seg.key] = b.dataset.v; renderSegments(); } };
+    });
+  }
+}
+
+/* ---- package integrity: what ships, from where, under which licence ----
+   数据与仓库里 THIRD_PARTY.md 一一对应；链接指向可核验的原文。 */
+const REPO = "https://github.com/ra9fael/winshun-tio";
+const MSYS2 = "https://repo.msys2.org/msys/x86_64/";
+const THIRD_PARTY = [
+  { name:"tio", ver:"3.9-3", license:"GPL-2.0-or-later",
+    lic:[["licenses/tio.txt", REPO+"/blob/main/licenses/tio.txt"]],
+    src:["repo.msys2.org · tio-3.9-3-x86_64.pkg.tar.zst",
+         "https://repo.msys2.org/msys/x86_64/tio-3.9-3-x86_64.pkg.tar.zst"],
+    also:[["github.com/tio/tio (上游源码)", "https://github.com/tio/tio"]],
+    why:"whyTio" },
+  { name:"msys-2.0.dll", ver:"MSYS2 runtime", license:"GPL + Cygwin",
+    lic:[["msys2-runtime-COPYING", REPO+"/blob/main/licenses/msys2-runtime-COPYING"],
+         ["CYGWIN_LICENSE", REPO+"/blob/main/licenses/msys2-runtime-CYGWIN_LICENSE"]],
+    src:["repo.msys2.org · msys/x86_64/", MSYS2], why:"whyRuntime" },
+  { name:"msys-glib-2.0-0.dll · msys-iconv-2.dll · msys-pcre2-8-0.dll · msys-lua-5.5.dll · msys-intl-8.dll",
+    ver:"LGPL-2.1-or-later（随 MSYS2 分发）", license:"LGPL-2.1-or-later",
+    lic:[["msys2-runtime-COPYING", REPO+"/blob/main/licenses/msys2-runtime-COPYING"]],
+    src:["repo.msys2.org · msys/x86_64/", MSYS2], why:"whyGlib" },
+  { name:"msys-gcc_s-seh-1.dll", ver:"gcc-libs", license:"GPL-3+ · Runtime exception",
+    lic:[["gcc-libs-COPYING3", REPO+"/blob/main/licenses/gcc-libs-COPYING3"],
+         ["COPYING.LIB", REPO+"/blob/main/licenses/gcc-libs-COPYING.LIB"],
+         ["RUNTIME.LIBRARY.EXCEPTION", REPO+"/blob/main/licenses/gcc-libs-RUNTIME.LIBRARY.EXCEPTION"]],
+    src:["repo.msys2.org · msys/x86_64/", MSYS2], why:"whyGcc" },
+  { name:"tio.exe (引导器) · TioApp.dll (窗口)", ver:"0.1.0", license:"MIT",
+    lic:[["LICENSE", REPO+"/blob/main/LICENSE"]],
+    src:["github.com/ra9fael/winshun-tio", REPO], why:"whySelf" },
+  { name:"Windows Terminal", ver:"机器已装为准", license:"MIT",
+    lic:[["github.com/microsoft/terminal", "https://github.com/microsoft/terminal"]],
+    src:["github.com/microsoft/terminal", "https://github.com/microsoft/terminal"],
+    why:"whyWt", notBundled:true },
+  { name:"Qt 6.12 (Core/Gui/Qml/Quick/QuickControls2)", ver:"6.12.0", license:"LGPL-3.0",
+    lic:[["gnu.org · LGPL-3.0", "https://www.gnu.org/licenses/lgpl-3.0.html"]],
+    src:["download.qt.io", "https://download.qt.io/official_releases/qt/"],
+    why:"whyQt", notBundled:true },
+  { name:"Phosphor 字体（图标字形）", ver:"—", license:"MIT",
+    lic:[["icons/PHOSPHOR-LICENSE", REPO+"/blob/main/icons/PHOSPHOR-LICENSE"]],
+    src:["github.com/ra9fael/winshun-plugin-icons", "https://github.com/ra9fael/winshun-plugin-icons"],
+    why:"whyPhos", notBundled:true }
+];
+
+function renderPkg(){
+  $("pkglist").innerHTML = THIRD_PARTY.map(row => {
+    const lics = row.lic.map(([label, href]) =>
+      `<a class="lic" href="${href}" target="_blank" rel="noopener">${esc(label)}</a>`).join("");
+    const also = (row.also ?? []).map(([label, href]) =>
+      `<a class="src" href="${href}" target="_blank" rel="noopener">${esc(label)}</a>`).join(" · ");
+    return `<div class="pkgrow">
+      <span class="n">${esc(row.name)} <span class="v">${esc(row.ver)}</span></span>
+      <span>${esc(t("srcText"))}: <a class="src" href="${row.src[1]}" target="_blank" rel="noopener">${esc(row.src[0])}</a>
+        ${also ? " · " + also : ""}</span>
+      <span class="lics">${lics}</span>
+      <span class="why">${esc(t(row.why))}</span>
+      ${row.notBundled ? `<span class="tag nb">${esc(t("notBundled"))}</span>` : ""}
+    </div>`;
+  }).join("");
+}
+
+/* ---- footer + title ---- */
+function renderFooter(){
+  const s = active(), p = portOf(s);
+  $("foot").textContent = s.capture === "on"
+    ? t("footCap").replace("{name}", p.name) : t("footIdle");
+  $("win-sub").textContent = `${p.name} · ${t("st"+s.state)}`;
+}
+
+function renderAll(){
+  renderTabs(); renderSessionCard(); renderCombo(); renderBaud(); renderSegments();
+  renderCapture(); renderIdentity(false); renderFooter(); renderPkg();
+}
 
 /* ---- demo strip ---- */
 $("demo-theme").onchange = e => document.documentElement.dataset.theme = e.target.value;
-$("demo-lang").onchange = e => { lang = e.target.value; applyLang(); };
-$("demo-state").onchange = e => demoState(e.target.value);
+$("demo-lang").onchange = e => { lang = e.target.value;
+  document.querySelectorAll("[data-i18n]").forEach(el => { el.textContent = t(el.dataset.i18n); });
+  $("tab-new").textContent = t("newSession") + " +"; renderAll(); };
+$("demo-state").onchange = e => {
+  const v = e.target.value;
+  if (v === "idle") SESSIONS.forEach(s => { s.state = "idle"; s.pid = 0; });
+  if (v === "capturing"){ const s = active(); s.permitted = true;
+    if (s.state !== "running"){ s.state = "running"; s.pid = s.pid || 20001; s.started = clock(); }
+    s.capture = "on"; }
+  if (v === "removed"){ const s = active();
+    s.lines.push({cls:"sys", text:"[" + t("removed") + "]"}); s.state = "idle"; }
+  renderAll();
+};
 
-applyLang(); renderBaud();
+function toast(msg){
+  const el = $("toast"); el.textContent = msg; el.classList.add("show");
+  setTimeout(() => el.classList.remove("show"), 1600);
+}
+
+document.querySelectorAll("[data-i18n]").forEach(el => { el.textContent = t(el.dataset.i18n); });
+setDetailsOpen(false);
+renderAll();
 </script>
 </body>
 </html>
