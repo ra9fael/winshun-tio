@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>tio 串口终端 — 多会话交互稿（会话导向）</title>
+<title>tio 串口终端 — 多会话交互稿（浏览器式页签）</title>
 <style>
 /* Design tokens mirror WinShun's nativeLook contract (DesignTokens.qml /
    ThemeBridge.cpp fallbacks) so the QML build can lift them verbatim. */
@@ -40,7 +40,7 @@ body{margin:0;padding:28px 16px;background:#6b6b76;font-family:var(--font);
   background:#2b2b2b;color:#eee;padding:2px 6px}
 
 /* ---- the window ---------------------------------------------------------- */
-.window{width:860px;max-width:100%;height:760px;background:var(--window);color:var(--text);
+.window{width:880px;max-width:100%;height:740px;background:var(--window);color:var(--text);
   border:1px solid var(--border);border-radius:var(--r-card);box-shadow:var(--shadow);
   display:flex;flex-direction:column;overflow:hidden}
 .titlebar{display:flex;align-items:center;gap:8px;padding:9px 12px;background:var(--card);
@@ -48,55 +48,79 @@ body{margin:0;padding:28px 16px;background:#6b6b76;font-family:var(--font);
 .titlebar .glyph{width:16px;height:16px;border-radius:4px;background:var(--accent);
   display:grid;place-items:center;color:#fff;font-size:10px;font-weight:700}
 .titlebar h1{font-size:12.5px;font-weight:600;margin:0}
-.titlebar .win-title{font-size:12.5px;color:var(--subtext);margin-left:6px}
 .titlebar .btns{margin-left:auto;display:flex;gap:14px;color:var(--subtext)}
 
-/* ---- session tab bar ------------------------------------------------------ */
-.tabs{display:flex;align-items:center;gap:4px;padding:6px 10px 0;background:var(--card);
-  border-bottom:1px solid var(--border);overflow-x:auto}
-.tab{display:flex;align-items:center;gap:7px;padding:7px 12px 8px;cursor:pointer;
-  border:1px solid transparent;border-bottom:none;border-radius:var(--r-ctl) var(--r-ctl) 0 0;
-  color:var(--subtext);white-space:nowrap;position:relative;top:1px;user-select:none}
-.tab:hover{background:var(--hover);color:var(--text)}
-.tab.active{background:var(--window);border-color:var(--border);color:var(--text);font-weight:600}
-.tab .dot{width:7px;height:7px;border-radius:50%;flex:none}
+/* ---- session tab strip: browser-style, the + lives here ------------------- */
+.tabstrip{display:flex;align-items:stretch;background:var(--card);
+  border-bottom:1px solid var(--border);padding:0 8px;overflow-x:auto}
+.tabstrip::-webkit-scrollbar{height:6px}
+.tabstrip::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+.stab{display:flex;align-items:center;gap:8px;padding:10px 10px 9px;cursor:pointer;
+  border:none;border-bottom:2px solid transparent;background:transparent;color:var(--subtext);
+  white-space:nowrap;user-select:none;font:inherit}
+.stab:hover{background:var(--hover);color:var(--text)}
+.stab.active{color:var(--text);border-bottom-color:var(--accent);font-weight:600}
+.stab .dot{width:7px;height:7px;border-radius:50%;flex:none}
 .dot.idle{background:var(--faint)} .dot.starting,.dot.running{background:var(--ok)}
 .dot.stopping{background:var(--warn)}
-.dot.cap{box-shadow:0 0 0 2px var(--window),0 0 0 3.5px var(--danger)}
-.tab .t1{font-size:12px} .tab .t2{font-size:10px;color:var(--subtext);max-width:150px;
-  overflow:hidden;text-overflow:ellipsis}
-.tab .close{border:none;background:transparent;color:var(--subtext);font-size:12px;
-  padding:0 2px;cursor:pointer;border-radius:3px}
-.tab .close:hover{color:var(--danger)}
-.tab.new{border-style:dashed;color:var(--subtext);font-size:12px;padding:7px 12px}
-.body{flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:12px}
-.body::-webkit-scrollbar{width:10px}
-.body::-webkit-scrollbar-thumb{background:var(--border);border-radius:5px}
+.dot.cap{box-shadow:0 0 0 2px var(--card),0 0 0 3.5px var(--danger)}
+.stab .com{font-size:12.5px}
+.stab .nm{font-size:10.5px;max-width:140px;overflow:hidden;text-overflow:ellipsis}
+.stab .close{border:none;background:transparent;color:var(--subtext);font-size:12px;
+  padding:0 2px;cursor:pointer;border-radius:3px;line-height:1}
+.stab .close:hover{color:var(--danger)}
+.stab.active .close{color:var(--text)}
+.tabbtn{align-self:center;flex:none;border:none;background:transparent;color:var(--subtext);
+  font-size:16px;line-height:1;padding:4px 10px;cursor:pointer;border-radius:var(--r-small)}
+.tabbtn:hover{background:var(--hover);color:var(--text)}
+.tabbtn:focus-visible,.stab:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+
+/* the + picker: a dropdown anchored under the tab strip, NOT a card at the bottom */
+.plusmenu{position:relative}
+.pluspanel{position:absolute;top:calc(100% + 4px);right:8px;z-index:8;min-width:320px;
+  background:var(--card);border:1px solid var(--border);border-radius:var(--r-ctl);
+  padding:6px;display:none;box-shadow:var(--shadow)}
+.plusmenu.open .pluspanel{display:block}
+.pluspanel .title{font-size:10.5px;color:var(--faint);letter-spacing:.04em;
+  text-transform:uppercase;padding:4px 8px 6px}
+.pluspanel .opt{padding:7px 10px;border-radius:var(--r-small);cursor:pointer}
+.pluspanel .opt:hover{background:var(--hover)}
+.pluspanel .opt .n{display:block;font-size:12.5px}
+.pluspanel .opt .s{display:block;font-size:10.5px;color:var(--subtext);font-family:var(--mono);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pluspanel .empty{padding:8px 10px;font-size:11.5px;color:var(--subtext)}
+
+/* ---- the per-session pane: the whole body below the strip is one tab's ---- */
+.pane{flex:1;min-height:0;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:12px}
+.pane::-webkit-scrollbar{width:10px}
+.pane::-webkit-scrollbar-thumb{background:var(--border);border-radius:5px}
 
 .card{background:var(--card);border:1px solid var(--border);border-radius:var(--r-card);
   padding:12px 14px;display:flex;flex-direction:column;gap:10px}
-.card .head{display:flex;align-items:baseline;gap:8px}
+.card .head{display:flex;align-items:center;gap:8px;min-height:26px}
 .card .head h2{font-size:13.5px;font-weight:600;margin:0}
 .card .head .note{font-size:11px;color:var(--subtext)}
 .card .head .chip{font-size:10.5px;color:var(--subtext);background:var(--sunken);
-  border-radius:999px;padding:1px 8px;margin-left:auto}
-.card.locked .chip{color:var(--warn)}
+  border-radius:999px;padding:1px 8px}
+.card .head .spacer{flex:1}
+.card.locked .chip.lock{color:var(--warn)}
 .row{display:flex;align-items:center;gap:10px}
 .row .lbl{width:84px;flex:none;font-size:11px;color:var(--subtext)}
 .row .hint{font-size:11px;color:var(--subtext);margin-top:2px}
 .warn-text{color:var(--warn)} .ok-text{color:var(--ok)} .danger-text{color:var(--danger)}
 
 button{font:inherit;font-size:12.5px;color:var(--text);background:var(--control);
-  border:1px solid var(--control-border);border-radius:var(--r-ctl);padding:6px 14px;
+  border:1px solid var(--control-border);border-radius:var(--r-ctl);padding:5px 12px;
   cursor:pointer;transition:background .12s,border-color .12s}
 button:hover:not(:disabled){background:var(--hover)}
 button:focus-visible,select:focus-visible,[role="option"]:focus-visible,
-.segment button:focus-visible,.tab:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.segment button:focus-visible,.stab:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 button.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-text);font-weight:600}
 button.stop{color:var(--danger);border-color:var(--danger)}
 button:disabled{opacity:.45;cursor:not-allowed}
+.btnrow{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 
-/* port selector: full-width combobox, refresh on its own row (not cramped) */
+/* port selector: full width, refresh beside it (not cramped) */
 .combo{position:relative;flex:1}
 .combo>button.selector{width:100%;display:flex;align-items:center;gap:8px;
   height:32px;padding:0 10px;text-align:left}
@@ -138,29 +162,29 @@ button:disabled{opacity:.45;cursor:not-allowed}
   box-shadow:0 1px 2px rgba(0,0,0,.18)}
 .segment.disabled{opacity:.5;pointer-events:none}
 
-/* capture permission bar */
+/* capture */
 .permbar{display:flex;gap:10px;align-items:center;background:var(--sunken);
   border:1px solid var(--warn);border-radius:var(--r-ctl);padding:8px 10px;font-size:11.5px}
 .permbar .t{flex:1;color:var(--text)}
-
-/* terminal preview */
 .term{background:var(--sunken);border:1px solid var(--border);border-radius:var(--r-ctl);
   font-family:var(--mono);font-size:11.5px;color:var(--text);padding:10px;
-  height:150px;overflow-y:auto;white-space:pre-wrap;word-break:break-all}
+  height:130px;overflow-y:auto;white-space:pre-wrap;word-break:break-all}
 .term .in{color:var(--accent)} .term .sys{color:var(--faint)}
-.termbar{display:flex;gap:8px;align-items:center}
+.termbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .termbar .stats{font-size:11px;color:var(--subtext);flex:1}
 
 .footer{display:flex;align-items:center;gap:10px;padding:10px 16px;background:var(--card);
   border-top:1px solid var(--border)}
 .footer .status{flex:1;font-size:11px;color:var(--subtext)}
+.footer .dot{width:7px;height:7px;border-radius:50%;display:inline-block;margin-right:6px;vertical-align:middle}
+.dot.capon{background:var(--danger)}
 .backend{display:flex;gap:10px;align-items:center;padding:6px 8px;border-radius:var(--r-small)}
 .backend.cur{background:var(--sunken)}
 .backend .t{font-size:12.5px} .backend .s{font-size:10.5px;color:var(--subtext)}
 .backend .tag{font-size:10px;border:1px solid currentColor;border-radius:999px;padding:0 6px;margin-left:auto}
 .backend .tag.ok{color:var(--accent)} .backend .tag.no{color:var(--danger)}
 
-/* package integrity: third-party rows with verifiable links */
+/* package integrity rows */
 .pkglist{display:flex;flex-direction:column;gap:6px;font-size:11.5px}
 .pkgrow{display:grid;grid-template-columns:170px 1fr auto;gap:4px 10px;
   padding:6px 8px;border:1px solid var(--border);border-radius:var(--r-small);align-items:baseline}
@@ -176,10 +200,6 @@ a.src:hover{border-bottom-style:solid}
   color:var(--subtext);white-space:nowrap;justify-self:end}
 .pkgrow .tag.nb{color:var(--warn)}
 
-/* new-session picker */
-.newpanel{display:none;flex-direction:column;gap:10px;border-top:1px dashed var(--border);
-  padding-top:10px}
-.newpanel.open{display:flex}
 .toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);background:var(--text);
   color:var(--window);font-size:12px;border-radius:999px;padding:6px 16px;opacity:0;
   transition:opacity .25s;pointer-events:none;z-index:9}
@@ -204,44 +224,47 @@ a.src:hover{border-bottom-style:solid}
   <div class="titlebar">
     <span class="glyph">t</span>
     <h1 data-i18n="app">tio 串口终端</h1>
-    <span class="win-title" id="win-sub"></span>
     <span class="btns"><span>—</span><span>▢</span><span>✕</span></span>
   </div>
 
-  <!-- ---- session tabs: the window is session-oriented ---- -->
-  <div class="tabs" id="tabs" role="tablist"></div>
+  <!-- ---- the session tab strip: tabs AND the + live here ------------------- -->
+  <div class="tabstrip" id="tabstrip" role="tablist"></div>
 
-  <div class="body">
-    <!-- ---- 会话 ---- -->
+  <!-- ---- everything below is ONE tab's pane; switching tabs swaps it ------- -->
+  <div class="pane" id="pane">
+
+    <!-- 会话：操作在标题行右侧，状态紧随其下 -->
     <section class="card">
-      <div class="head"><h2 data-i18n="groupSession">会话</h2>
-        <span class="note" id="sess-state-note"></span>
-        <span class="chip" id="sess-chip"></span></div>
-      <div class="row"><span class="lbl" data-i18n="phase">阶段</span><span class="hint" id="sess-phase"></span></div>
-      <div class="row"><span class="lbl" data-i18n="portState">端口状态</span><span class="hint warn-text" id="sess-port"></span></div>
-      <div class="row" style="justify-content:flex-end">
+      <div class="head">
+        <h2 data-i18n="groupSession">会话</h2>
+        <span class="note" id="sess-note"></span>
+        <span class="chip" id="sess-chip"></span>
+        <span class="spacer"></span>
         <button class="primary" id="btn-launch" data-i18n="launch">启动</button>
         <button class="stop" id="btn-stop" data-i18n="stop">停止</button>
         <button id="btn-restart" data-i18n="restart">重启</button>
-        <button id="btn-clone" data-i18n="clone">克隆会话</button>
+        <button id="btn-clone" data-i18n="clone">克隆</button>
       </div>
+      <div class="row"><span class="lbl" data-i18n="phase">阶段</span><span class="hint" id="sess-phase"></span></div>
+      <div class="row"><span class="lbl" data-i18n="portState">端口状态</span><span class="hint warn-text" id="sess-port"></span></div>
+      <div class="row"><span class="lbl" data-i18n="pid">PID</span><span class="hint" id="sess-pid"></span></div>
+      <div class="row"><span class="lbl"></span>
+        <span class="hint" data-i18n="sessCaveat">“已启动”不等于“端口已打开”：端口状态只有在上游给出可验证信号时才会变化。</span></div>
     </section>
 
-    <!-- ---- 端口与参数 ---- -->
+    <!-- 端口与参数 -->
     <section class="card" id="port-card">
       <div class="head"><h2 data-i18n="groupPort">端口与参数</h2>
-        <span class="chip" id="port-lock" hidden data-i18n="locked">会话运行中 · 锁定</span></div>
+        <span class="chip lock" id="port-lock" hidden data-i18n="locked">会话运行中 · 锁定</span></div>
       <div class="row">
         <div class="combo" id="combo">
           <button class="selector" id="combo-btn" aria-haspopup="listbox" aria-expanded="false">
             <span class="sel-name" id="combo-sel"></span><span class="caret"></span></button>
           <div class="list" role="listbox" id="combo-list"></div>
         </div>
-      </div>
-      <div class="row">
-        <span class="hint" id="device-hint" style="flex:1"></span>
         <button id="btn-refresh" data-i18n="refresh">刷新</button>
       </div>
+      <div class="row"><span class="hint" id="device-hint" style="flex:1"></span></div>
       <div class="row"><span class="lbl" data-i18n="baud">波特率</span>
         <div class="combo" id="baud-combo">
           <button class="selector" id="baud-btn" aria-haspopup="listbox" aria-expanded="false">
@@ -261,7 +284,7 @@ a.src:hover{border-bottom-style:solid}
         <span class="hint" data-i18n="flowHint">hard 时 RTS 由流控管理，不承诺固定电平</span></div>
     </section>
 
-    <!-- ---- 捕获：新能力，明确的权限边界 ---- -->
+    <!-- 会话捕获：明确的权限边界 -->
     <section class="card">
       <div class="head"><h2 data-i18n="groupCapture">会话捕获</h2>
         <span class="note" id="cap-note"></span>
@@ -284,7 +307,7 @@ a.src:hover{border-bottom-style:solid}
       </div>
     </section>
 
-    <!-- ---- 设备详情 ---- -->
+    <!-- 设备详情 -->
     <section class="card">
       <div class="head fold" id="details-head" role="button" tabindex="0" aria-expanded="false">
         <span class="chev" id="details-chev" aria-hidden="true">▸</span>
@@ -306,24 +329,7 @@ a.src:hover{border-bottom-style:solid}
       </div>
     </section>
 
-    <!-- ---- 新建会话 ---- -->
-    <section class="card" id="new-card">
-      <div class="head"><h2 data-i18n="newSession">新建会话</h2>
-        <span class="note" data-i18n="newNote">选一个还没被占用的端口</span></div>
-      <div class="newpanel" id="newpanel">
-        <div class="combo" id="new-combo">
-          <button class="selector" id="new-btn" aria-haspopup="listbox" aria-expanded="false">
-            <span class="sel-name" id="new-sel"></span><span class="caret"></span></button>
-          <div class="list" role="listbox" id="new-list"></div>
-        </div>
-        <div class="row" style="justify-content:flex-end">
-          <button id="new-cancel" data-i18n="cancel">取消</button>
-          <button class="primary" id="new-create" data-i18n="create">创建会话</button>
-        </div>
-      </div>
-    </section>
-
-    <!-- ---- 后端 ---- -->
+    <!-- 终端后端 -->
     <section class="card">
       <div class="head"><h2 data-i18n="groupBackend">终端后端</h2></div>
       <div class="backend cur"><span class="t">Windows Terminal</span>
@@ -333,7 +339,7 @@ a.src:hover{border-bottom-style:solid}
         <span class="tag ok" data-i18n="bkOk">可用</span></div>
     </section>
 
-    <!-- ---- 包完整性：第三方文件与来源，全部可查 ---- -->
+    <!-- 包完整性：第三方文件与来源，全部可查 -->
     <section class="card">
       <div class="head"><h2 data-i18n="groupPackage">包完整性</h2>
         <span class="chip">0.1.0 · tio 3.9-3</span></div>
@@ -346,7 +352,7 @@ a.src:hover{border-bottom-style:solid}
       </div>
     </section>
 
-    <!-- ---- 诊断 ---- -->
+    <!-- 诊断 -->
     <section class="card">
       <div class="head"><h2 data-i18n="groupDiag">诊断</h2>
         <span class="note" data-i18n="diagNote">不含串口内容</span></div>
@@ -384,8 +390,9 @@ const PORTS = [
 ];
 
 const I18N = {
-  zh:{ app:"tio 串口终端", groupSession:"会话", phase:"阶段", portState:"端口状态",
-    launch:"启动", stop:"停止", restart:"重启", clone:"克隆会话",
+  zh:{ app:"tio 串口终端", groupSession:"会话", phase:"阶段", portState:"端口状态", pid:"PID",
+    launch:"启动", stop:"停止", restart:"重启", clone:"克隆",
+    sessCaveat:"“已启动”不等于“端口已打开”：端口状态只有在上游给出可验证信号时才会变化。",
     groupPort:"端口与参数", locked:"会话运行中 · 锁定", refresh:"刷新",
     baud:"波特率", dataBits:"数据位", parity:"校验", stopBits:"停止位", flow:"流控",
     flowHint:"hard 时 RTS 由流控管理，不承诺固定电平",
@@ -398,7 +405,6 @@ const I18N = {
     idMissing:"身份未知：只能确认当前端口",
     kMfr:"厂商", kChip:"产品", kSerial:"序列号", kBus:"总线", kDriver:"驱动",
     kLocation:"位置", kInstance:"实例 ID", kStatus:"设备状态", okState:"正常",
-    newSession:"新建会话", newNote:"选一个还没被占用的端口", cancel:"取消", create:"创建会话",
     groupBackend:"终端后端", bkOk:"可用", bkOwned:"tio 是我们创建的子进程：停止可靠",
     groupPackage:"包完整性", pkgOk:"有效 · 每个文件都与清单一致",
     pkgIntro:"包里带的是上游 tio 与它真正导入的 MSYS2 运行时；每行给出来源、许可证和原文，点开可查。",
@@ -413,13 +419,17 @@ const I18N = {
     whyPhos:"图标字形来源；包里只有生成产物（app.ico、icons/app-*.png）",
     groupDiag:"诊断", diagNote:"不含串口内容", copyDiag:"复制诊断",
     stIdle:"未运行", stStarting:"启动中…", stRunning:"运行中", stStopping:"停止中…",
-    psUnknown:"未知", psOpen:"已打开（tio 报告）", copied:"已复制到剪贴板", saved:"已导出",
-    capNeedRun:"捕获在会话运行时才有内容", footIdle:"终端由 Windows Terminal 或 conhost 提供。捕获关闭时不读取任何串口内容。",
-    footCap:"正在捕获 {name} 的串口内容：字节只留在本机。", removed:"这个端口不在了",
+    psUnknown:"未知", copied:"已复制到剪贴板", saved:"已导出",
+    capNeedRun:"捕获在会话运行时才有内容",
+    footIdle:"终端由 Windows Terminal 或 conhost 提供；捕获关闭时不读取任何串口内容。",
+    footCap:"正在捕获 {name} 的串口内容：字节只留在本机。",
+    removed:"这个端口不在了", swapped:"同一 COM 号上是另一台设备：身份已重新采集",
     closeAsk:"会话还在运行，确定关闭这个页签？", yes:"关闭会话", no:"取消",
-    inUse:"这个端口已经在别的会话里", newTitle:"新会话" },
-  en:{ app:"tio serial terminal", groupSession:"Session", phase:"Phase", portState:"Port state",
-    launch:"Launch", stop:"Stop", restart:"Restart", clone:"Clone session",
+    inUse:"这个端口已经在别的会话里", plusTitle:"新建会话：选一个没人占用的端口",
+    plusEmpty:"没有空闲端口了：每个会话占用一个端口" },
+  en:{ app:"tio serial terminal", groupSession:"Session", phase:"Phase", portState:"Port state", pid:"PID",
+    launch:"Launch", stop:"Stop", restart:"Restart", clone:"Clone",
+    sessCaveat:"\"Started\" is not \"port open\": the port state changes only when the upstream gives a verifiable signal.",
     groupPort:"Port & parameters", locked:"session running · locked", refresh:"Refresh",
     baud:"Baud rate", dataBits:"Data bits", parity:"Parity", stopBits:"Stop bits", flow:"Flow control",
     flowHint:"with hard flow the RTS follows the flow, not a fixed level",
@@ -432,7 +442,6 @@ const I18N = {
     idMissing:"unknown: only the current port is confirmed",
     kMfr:"Manufacturer", kChip:"Product", kSerial:"Serial number", kBus:"Bus", kDriver:"Driver",
     kLocation:"Location", kInstance:"Instance id", kStatus:"Device status", okState:"no problem reported",
-    newSession:"New session", newNote:"pick a port no session holds", cancel:"Cancel", create:"Create session",
     groupBackend:"Terminal backend", bkOk:"available", bkOwned:"tio is the child process we create: Stop is reliable",
     groupPackage:"Package integrity", pkgOk:"valid · every file matches the manifest",
     pkgIntro:"The package ships upstream tio plus the MSYS2 runtime it really imports; each row links its source, licence and licence text for verification.",
@@ -447,11 +456,14 @@ const I18N = {
     whyPhos:"glyph source for the icons; only generated artefacts ship (app.ico, icons/app-*.png)",
     groupDiag:"Diagnostics", diagNote:"never serial content", copyDiag:"Copy diagnostics",
     stIdle:"not running", stStarting:"starting…", stRunning:"running", stStopping:"stopping…",
-    psUnknown:"unknown", psOpen:"open (reported by tio)", copied:"copied to clipboard", saved:"exported",
-    capNeedRun:"capture has content while the session runs", footIdle:"Windows Terminal or conhost provides the terminal. With capture off, no serial byte is read.",
-    footCap:"Capturing serial content of {name}: bytes stay on this machine.", removed:"this port is gone",
+    psUnknown:"unknown", copied:"copied to clipboard", saved:"exported",
+    capNeedRun:"capture has content while the session runs",
+    footIdle:"Windows Terminal or conhost provides the terminal; with capture off, no serial byte is read.",
+    footCap:"Capturing serial content of {name}: bytes stay on this machine.",
+    removed:"this port is gone", swapped:"another device now sits on this COM number: the identity was recaptured",
     closeAsk:"The session is still running. Close this tab anyway?", yes:"Close session", no:"Cancel",
-    inUse:"that port is already held by another session", newTitle:"New session" }
+    inUse:"that port is already held by another session", plusTitle:"New session: pick a port nobody holds",
+    plusEmpty:"no free ports: every session holds one" }
 };
 
 const RATES = [9600,19200,38400,57600,115200,230400,460800,921600,1500000];
@@ -463,12 +475,12 @@ const SEGS = [
 ];
 
 const $ = id => document.getElementById(id);
-let lang = "zh", activeId = 0, nextId = 3, detailsOpen = false, collectTimer = null, capTimer = null;
+let lang = "zh", activeId = 0, nextId = 2, detailsOpen = false, collectTimer = null, capTimer = null;
 const t = k => I18N[lang][k];
 const esc = s => String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
 const clock = () => new Date().toTimeString().slice(0,8);
 
-/* ---- sessions: the window's first-class objects ---- */
+/* ---- sessions: each tab is one session ------------------------------- */
 const SESSIONS = [
   { id:0, com:8, state:"running", capture:"on", permitted:true, pid:18216,
     params:{ baud:115200, dataBits:"8", parity:"none", stopBits:"1", flow:"none" },
@@ -484,62 +496,73 @@ const SESSIONS = [
 const active = () => SESSIONS.find(s => s.id === activeId);
 const portOf = s => PORTS.find(p => p.com === s.com);
 
-/* ---- tabs ---- */
+/* ---- the tab strip: tabs AND the + dropdown live here ------------------ */
 function renderTabs(){
-  $("tabs").innerHTML = SESSIONS.map(s => {
+  $("tabstrip").innerHTML = SESSIONS.map(s => {
     const p = portOf(s);
     const cap = s.capture === "on" ? " cap" : "";
-    return `<div class="tab ${s.id===activeId?"active":""}" role="tab" tabindex="0" data-id="${s.id}"
-        aria-selected="${s.id===activeId}">
+    return `<button class="stab ${s.id===activeId?"active":""}" role="tab" tabindex="0"
+        data-id="${s.id}" aria-selected="${s.id===activeId}"
+        title="${esc(p ? p.name : "")}">
       <span class="dot ${s.state}${cap}"></span>
-      <span><span class="t1">COM${s.com}</span><br><span class="t2">${esc(p?p.name:"?")}</span></span>
-      <button class="close" data-close="${s.id}" title="${esc(t("stop"))}">✕</button>
-    </div>`;
+      <span class="com">COM${s.com}</span>
+      <span class="nm">${esc(p ? p.name : "")}</span>
+      <span class="close" data-close="${s.id}" title="${esc(t("stop"))}">✕</span>
+    </button>`;
   }).join("") +
-  `<button class="tab new" id="tab-new" data-i18n="newSession">${esc(t("newSession"))} +</button>`;
-  $("tabs").querySelectorAll(".tab[data-id]").forEach(el => {
+  `<span class="plusmenu" id="plusmenu">
+     <button class="tabbtn" id="tab-plus" data-i18n="newSession" aria-haspopup="true"
+       aria-expanded="false" title="${esc(t("plusTitle"))}">＋</button>
+     <div class="pluspanel" id="pluspanel">
+       <div class="title">${esc(t("plusTitle"))}</div>
+       <div id="plus-opts"></div>
+     </div>
+   </span>`;
+  $("tabstrip").querySelectorAll(".stab[data-id]").forEach(el => {
     el.onclick = e => { if (!e.target.closest(".close")) switchTo(+el.dataset.id); };
     el.onkeydown = e => { if (e.key === "Enter") switchTo(+el.dataset.id); };
   });
-  $("tabs").querySelectorAll("[data-close]").forEach(b => {
+  $("tabstrip").querySelectorAll("[data-close]").forEach(b => {
     b.onclick = e => { e.stopPropagation(); closeSession(+b.dataset.close); };
   });
-  $("tab-new").onclick = () => { renderNewPanel(); $("newpanel").classList.add("open");
-    $("new-card").scrollIntoView({behavior:"smooth", block:"center"}); };
+  $("tab-plus").onclick = e => {
+    e.stopPropagation();
+    const open = $("plusmenu").classList.toggle("open");
+    $("tab-plus").setAttribute("aria-expanded", String(open));
+    if (open) renderPlusOptions();
+  };
+  applyLangToStatic();
 }
 
-/* ---- new session picker ---- */
-function renderNewPanel(){
+function renderPlusOptions(){
   const free = PORTS.filter(p => !SESSIONS.some(s => s.com === p.com));
-  $("new-list").innerHTML = free.length ? free.map(p =>
-    `<div role="option" tabindex="0" data-com="${p.com}">
+  $("plus-opts").innerHTML = free.length ? free.map(p =>
+    `<div class="opt" tabindex="0" role="option" data-com="${p.com}">
       <span class="n">${esc(p.name)}</span>
       <span class="s">${esc(p.device)} · ${esc(p.identity)}</span></div>`).join("")
-    : `<div class="hint">${esc(t("inUse"))}</div>`;
-  $("new-sel").textContent = free.length ? free[0].name : t("inUse");
-  $("new-list").querySelectorAll("[data-com]").forEach(el => {
-    el.onclick = () => { $("new-sel").textContent =
-      PORTS.find(p => p.com === +el.dataset.com).name;
-      $("new-btn").dataset.com = el.dataset.com; };
+    : `<div class="empty">${esc(t("plusEmpty"))}</div>`;
+  $("plus-opts").querySelectorAll("[data-com]").forEach(el => {
+    el.onclick = () => { createSession(+el.dataset.com); $("plusmenu").classList.remove("open"); };
+    el.onkeydown = e => { if (e.key === "Enter"){ e.preventDefault();
+      createSession(+el.dataset.com); $("plusmenu").classList.remove("open"); } };
   });
-  $("new-btn").dataset.com = free.length ? free[0].com : "";
 }
-$("new-cancel").onclick = () => $("newpanel").classList.remove("open");
-$("new-create").onclick = () => {
-  const com = +$("new-btn").dataset.com;
-  if (!com) return;
+document.addEventListener("click", e => {
+  if (!e.target.closest("#plusmenu")) $("plusmenu").classList.remove("open");
+});
+
+function createSession(com){
   const s = { id:nextId++, com, state:"idle", capture:"off", permitted:false, pid:0,
     params:{ baud:115200, dataBits:"8", parity:"none", stopBits:"1", flow:"none" },
-    started:null, lines:[{ cls:"sys", text:`[${t("newTitle")} · COM${com}]` }] };
-  SESSIONS.push(s); switchTo(s.id);
-  $("newpanel").classList.remove("open"); toast(t("saved"));
-};
+    started:null, lines:[{ cls:"sys", text:`[COM${com}]` }] };
+  SESSIONS.push(s); switchTo(s.id); toast(t("saved"));
+}
 
 /* ---- session lifecycle (simulated) ---- */
 function switchTo(id){ activeId = id; renderAll(); }
 function closeSession(id){
   const s = SESSIONS.find(x => x.id === id);
-  if (s.state === "running" && !confirm(t("closeAsk"))) return;
+  if ((s.state === "running" || s.state === "starting") && !confirm(t("closeAsk"))) return;
   SESSIONS.splice(SESSIONS.indexOf(s), 1);
   if (!SESSIONS.length){ SESSIONS.push({ id:nextId++, com:PORTS[0].com, state:"idle",
     capture:"off", permitted:false, pid:0,
@@ -562,16 +585,20 @@ $("btn-stop").onclick = () => {
   setTimeout(() => { s.state = "idle"; s.pid = 0; s.started = null;
     s.lines.push({cls:"sys", text:"[session stopped · exit 0]"}); renderAll(); }, 600);
 };
-$("btn-restart").onclick = () => { if (active().state !== "idle") $("btn-stop").onclick(); setTimeout(()=>$("btn-launch").onclick(), 700); };
+$("btn-restart").onclick = () => {
+  const s = active(); if (s.state !== "running") return;
+  $("btn-stop").onclick();
+  setTimeout(()=>$("btn-launch").onclick(), 700);
+};
 $("btn-clone").onclick = () => {
   const s = active();
-  if (SESSIONS.some(x => x.com === s.com)) { toast(t("inUse")); return; }
+  if (SESSIONS.some(x => x.com === s.com && x.id !== s.id)) { toast(t("inUse")); return; }
   SESSIONS.push({ id:nextId++, com:s.com, state:"idle", capture:"off", permitted:false,
     pid:0, params:{...s.params}, started:null, lines:[] });
   switchTo(SESSIONS.at(-1).id);
 };
 
-/* ---- port selector (full width; per session) ---- */
+/* ---- port selector (per session) ---- */
 function renderCombo(){
   const s = active();
   $("combo-list").innerHTML = PORTS.map(p => {
@@ -593,7 +620,6 @@ $("combo-btn").onclick = () => $("combo").classList.toggle("open");
 document.addEventListener("click", e => {
   if (!$("combo").contains(e.target)) $("combo").classList.remove("open");
   if (!$("baud-combo").contains(e.target)) $("baud-combo").classList.remove("open");
-  if (!$("new-combo").contains(e.target)) $("new-combo").classList.remove("open");
 });
 $("combo-list").onclick = e => {
   const o = e.target.closest("[data-com]");
@@ -635,8 +661,7 @@ function renderCapture(){
   $("btn-capture").disabled = s.state !== "running" && !on;
   $("cap-note").textContent = s.state === "running" ? "" : t("capNeedRun");
   const bytes = s.lines.reduce((n,l) => n + l.text.length, 0);
-  $("cap-stats").textContent = on
-    ? `${s.lines.length} ln · ${bytes} B · ${s.started ?? ""}` : "";
+  $("cap-stats").textContent = on ? `${s.lines.length} ln · ${bytes} B · ${s.started ?? ""}` : "";
   $("permbar").hidden = s.permitted || on;
   renderTerm(s);
 }
@@ -672,9 +697,7 @@ function download(name, text){
   a.href = URL.createObjectURL(new Blob([text], {type:"text/plain"}));
   a.download = name; a.click(); URL.revokeObjectURL(a.href);
 }
-function sessionText(s){
-  return s.lines.map(l => l.text).join("\n") + "\n";
-}
+function sessionText(s){ return s.lines.map(l => l.text).join("\n") + "\n"; }
 $("btn-copy").onclick = async () => {
   try { await navigator.clipboard.writeText(sessionText(active())); }
   catch { const ta = document.createElement("textarea"); ta.value = sessionText(active());
@@ -706,18 +729,19 @@ $("details-head").onkeydown = e => {
   if (e.key === "Enter" || e.key === " "){ e.preventDefault(); setDetailsOpen(!detailsOpen); }
 };
 
-/* ---- session card + lock ---- */
+/* ---- session card: state + the buttons live in its header ---- */
 function renderSessionCard(){
   const s = active(), p = portOf(s);
-  const running = s.state === "running" || s.state === "starting" || s.state === "stopping";
-  $("sess-phase").textContent = t("st" + s.state);
-  $("sess-port").textContent = s.state === "running" ? t("psUnknown") : t("psUnknown");
-  $("sess-state-note").textContent = running ? `${p.name}` : "";
+  $("sess-note").textContent = p.name;
   $("sess-chip").textContent = s.pid ? "PID " + s.pid : "COM" + s.com;
+  $("sess-phase").textContent = t("st" + s.state);
+  $("sess-port").textContent = t("psUnknown");
+  $("sess-pid").textContent = s.pid || "—";
+  const running = s.state !== "idle";
   $("btn-launch").disabled = s.state !== "idle";
-  $("btn-stop").disabled = s.state === "idle";
-  $("btn-restart").disabled = s.state === "idle";
-  const locked = s.state !== "idle";
+  $("btn-stop").disabled = !running;
+  $("btn-restart").disabled = s.state !== "running";
+  const locked = running;
   $("port-lock").hidden = !locked;
   $("port-card").classList.toggle("locked", locked);
   $("port-card").querySelectorAll(".segment").forEach(el =>
@@ -752,85 +776,28 @@ function renderSegments(){
   }
 }
 
-/* ---- package integrity: what ships, from where, under which licence ----
-   数据与仓库里 THIRD_PARTY.md 一一对应；链接指向可核验的原文。 */
-const REPO = "https://github.com/ra9fael/winshun-tio";
-const MSYS2 = "https://repo.msys2.org/msys/x86_64/";
-const THIRD_PARTY = [
-  { name:"tio", ver:"3.9-3", license:"GPL-2.0-or-later",
-    lic:[["licenses/tio.txt", REPO+"/blob/main/licenses/tio.txt"]],
-    src:["repo.msys2.org · tio-3.9-3-x86_64.pkg.tar.zst",
-         "https://repo.msys2.org/msys/x86_64/tio-3.9-3-x86_64.pkg.tar.zst"],
-    also:[["github.com/tio/tio (上游源码)", "https://github.com/tio/tio"]],
-    why:"whyTio" },
-  { name:"msys-2.0.dll", ver:"MSYS2 runtime", license:"GPL + Cygwin",
-    lic:[["msys2-runtime-COPYING", REPO+"/blob/main/licenses/msys2-runtime-COPYING"],
-         ["CYGWIN_LICENSE", REPO+"/blob/main/licenses/msys2-runtime-CYGWIN_LICENSE"]],
-    src:["repo.msys2.org · msys/x86_64/", MSYS2], why:"whyRuntime" },
-  { name:"msys-glib-2.0-0.dll · msys-iconv-2.dll · msys-pcre2-8-0.dll · msys-lua-5.5.dll · msys-intl-8.dll",
-    ver:"LGPL-2.1-or-later（随 MSYS2 分发）", license:"LGPL-2.1-or-later",
-    lic:[["msys2-runtime-COPYING", REPO+"/blob/main/licenses/msys2-runtime-COPYING"]],
-    src:["repo.msys2.org · msys/x86_64/", MSYS2], why:"whyGlib" },
-  { name:"msys-gcc_s-seh-1.dll", ver:"gcc-libs", license:"GPL-3+ · Runtime exception",
-    lic:[["gcc-libs-COPYING3", REPO+"/blob/main/licenses/gcc-libs-COPYING3"],
-         ["COPYING.LIB", REPO+"/blob/main/licenses/gcc-libs-COPYING.LIB"],
-         ["RUNTIME.LIBRARY.EXCEPTION", REPO+"/blob/main/licenses/gcc-libs-RUNTIME.LIBRARY.EXCEPTION"]],
-    src:["repo.msys2.org · msys/x86_64/", MSYS2], why:"whyGcc" },
-  { name:"tio.exe (引导器) · TioApp.dll (窗口)", ver:"0.1.0", license:"MIT",
-    lic:[["LICENSE", REPO+"/blob/main/LICENSE"]],
-    src:["github.com/ra9fael/winshun-tio", REPO], why:"whySelf" },
-  { name:"Windows Terminal", ver:"机器已装为准", license:"MIT",
-    lic:[["github.com/microsoft/terminal", "https://github.com/microsoft/terminal"]],
-    src:["github.com/microsoft/terminal", "https://github.com/microsoft/terminal"],
-    why:"whyWt", notBundled:true },
-  { name:"Qt 6.12 (Core/Gui/Qml/Quick/QuickControls2)", ver:"6.12.0", license:"LGPL-3.0",
-    lic:[["gnu.org · LGPL-3.0", "https://www.gnu.org/licenses/lgpl-3.0.html"]],
-    src:["download.qt.io", "https://download.qt.io/official_releases/qt/"],
-    why:"whyQt", notBundled:true },
-  { name:"Phosphor 字体（图标字形）", ver:"—", license:"MIT",
-    lic:[["icons/PHOSPHOR-LICENSE", REPO+"/blob/main/icons/PHOSPHOR-LICENSE"]],
-    src:["github.com/ra9fael/winshun-plugin-icons", "https://github.com/ra9fael/winshun-plugin-icons"],
-    why:"whyPhos", notBundled:true }
-];
-
-function renderPkg(){
-  $("pkglist").innerHTML = THIRD_PARTY.map(row => {
-    const lics = row.lic.map(([label, href]) =>
-      `<a class="lic" href="${href}" target="_blank" rel="noopener">${esc(label)}</a>`).join("");
-    const also = (row.also ?? []).map(([label, href]) =>
-      `<a class="src" href="${href}" target="_blank" rel="noopener">${esc(label)}</a>`).join(" · ");
-    return `<div class="pkgrow">
-      <span class="n">${esc(row.name)} <span class="v">${esc(row.ver)}</span></span>
-      <span>${esc(t("srcText"))}: <a class="src" href="${row.src[1]}" target="_blank" rel="noopener">${esc(row.src[0])}</a>
-        ${also ? " · " + also : ""}</span>
-      <span class="lics">${lics}</span>
-      <span class="why">${esc(t(row.why))}</span>
-      ${row.notBundled ? `<span class="tag nb">${esc(t("notBundled"))}</span>` : ""}
-    </div>`;
-  }).join("");
-}
-
-/* ---- footer + title ---- */
+/* ---- footer ---- */
 function renderFooter(){
   const s = active(), p = portOf(s);
-  $("foot").textContent = s.capture === "on"
-    ? t("footCap").replace("{name}", p.name) : t("footIdle");
-  $("win-sub").textContent = `${p.name} · ${t("st"+s.state)}`;
+  $("foot").innerHTML = s.capture === "on"
+    ? `<span class="dot capon"></span>${esc(t("footCap").replace("{name}", p.name))}`
+    : esc(t("footIdle"));
 }
 
 function renderAll(){
   renderTabs(); renderSessionCard(); renderCombo(); renderBaud(); renderSegments();
-  renderCapture(); renderIdentity(false); renderFooter(); renderPkg();
+  renderCapture(); renderIdentity(false); renderFooter();
 }
 
 /* ---- demo strip ---- */
-$("demo-theme").onchange = e => document.documentElement.dataset.theme = e.target.value;
-$("demo-lang").onchange = e => { lang = e.target.value;
+function applyLangToStatic(){
   document.querySelectorAll("[data-i18n]").forEach(el => { el.textContent = t(el.dataset.i18n); });
-  $("tab-new").textContent = t("newSession") + " +"; renderAll(); };
+}
+$("demo-theme").onchange = e => document.documentElement.dataset.theme = e.target.value;
+$("demo-lang").onchange = e => { lang = e.target.value; applyLangToStatic(); renderAll(); };
 $("demo-state").onchange = e => {
   const v = e.target.value;
-  if (v === "idle") SESSIONS.forEach(s => { s.state = "idle"; s.pid = 0; });
+  if (v === "idle") SESSIONS.forEach(s => { s.state = "idle"; s.pid = 0; s.capture = "off"; });
   if (v === "capturing"){ const s = active(); s.permitted = true;
     if (s.state !== "running"){ s.state = "running"; s.pid = s.pid || 20001; s.started = clock(); }
     s.capture = "on"; }
@@ -844,7 +811,7 @@ function toast(msg){
   setTimeout(() => el.classList.remove("show"), 1600);
 }
 
-document.querySelectorAll("[data-i18n]").forEach(el => { el.textContent = t(el.dataset.i18n); });
+applyLangToStatic();
 setDetailsOpen(false);
 renderAll();
 </script>
