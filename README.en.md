@@ -4,6 +4,17 @@ Opens a serial terminal with [tio](https://github.com/tio/tio) bundled inside th
 
 Current version: **v0.1.0**.
 
+## Interactive online demo (no install)
+
+The standalone window has an **interactive web mockup**: the port dropdown named the way Device Manager names its ports, the automatic identity capture on selection, the foldable device-details card — all tryable in a browser:
+
+> **[Open the interactive demo](https://ra9fael.github.io/winshun-tio/)** (GitHub Pages, published from `mockup/` on push)
+
+If Pages is not live yet, a zero-setup preview also works:
+`https://htmlpreview.github.io/?https://github.com/ra9fael/winshun-tio/blob/main/mockup/index.html`
+
+Note: this is a **UI mockup** with hard-coded sample devices (COM8/COM9). It opens no serial port and does not represent the running plugin; the installed plugin is the authority on behaviour.
+
 > **The boundary, stated plainly**: this plugin launches tio. It does **not** read, render, forward or log a single byte of serial data. What the terminal shows and what the keyboard sends belong to tio and its own window. So the most this plugin can say is "the process started" — "the port is open" appears only when tio itself gives a verifiable signal, and the default state is "unknown".
 
 ## Install

@@ -1,0 +1,41 @@
+# Publishes the interactive mockup (mockup/index.html) as the repository's
+# GitHub Pages site, so a visitor can try the window's interaction — the
+# Device-Manager-named port dropdown, the automatic identity capture, the
+# foldable details card — without installing the plugin. The mockup is one
+# self-contained HTML file with simulated data; nothing here builds or ships.
+#
+# configure-pages(enablement: true) turns Pages on with source "GitHub
+# Actions" on the first run, so no manual settings click is needed.
+name: pages
+
+on:
+  push:
+    branches: [main]
+    paths: ["mockup/**", ".github/workflows/pages.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: mockup
+      - id: deployment
+        uses: actions/deploy-pages@v4
