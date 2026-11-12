@@ -268,6 +268,21 @@ static void testPlans()
     CHECK(custom.program[7] == "odd", "custom parity reaches argv");
     CHECK(custom.program[9] == "2", "custom stop bits reaches argv");
     CHECK(custom.program[11] == "hard", "custom flow reaches argv");
+
+    // Capture is tio writing its own log: the flags go after the parameters and
+    // before the device, so the device stays last. Without a log path tio gets
+    // exactly the arguments it always got.
+    const Plan capture = planLaunch(Backend::Conhost, "", "tio.exe", port, serial, "s-1",
+                                    "D:\\data\\sessions\\s-1.log");
+    CHECK(capture.error == PlanError::None, "a capture plan is valid");
+    CHECK(capture.program.size() == conhost.program.size() + 5, "capture adds five arguments");
+    CHECK(capture.program[12] == "-L", "logging is switched on");
+    CHECK(capture.program[13] == "--log-file", "the log file flag follows");
+    CHECK(capture.program[14] == "D:\\data\\sessions\\s-1.log", "the log path is the one given");
+    CHECK(capture.program[15] == "--log-append", "the log appends");
+    CHECK(capture.program[16] == "--log-strip", "escape sequences are stripped");
+    CHECK(capture.program.back() == "/dev/ttyS9", "the device stays last with capture on");
+    CHECK(conhost.program.back() == "/dev/ttyS9", "and last without it");
 }
 
 // ---- session state machine ------------------------------------------------------
@@ -391,8 +406,24 @@ static void testReadiness()
     const Readiness r6 = check(running);
     CHECK(r6.blocking.size() == 1 && r6.blocking[0] == Gate::Session, "session gate");
 
+    // A port another session runs on is refused by name: the reason is not "the
+    // port is bad", it is "someone else has it right now".
+    Environment busy = env;
+    busy.portBusyByOther = true;
+    const Readiness r7 = check(busy);
+    CHECK(r7.blocking.size() == 1 && r7.blocking[0] == Gate::PortBusy, "port busy gate");
+    CHECK(std::string(gateId(r7.blocking[0])) == "portBusy", "port busy gate id");
+
+    // A port that does not parse is not also called busy: one reason, not two.
+    Environment invalidAndBusy = badPort;
+    invalidAndBusy.portBusyByOther = true;
+    const Readiness r8 = check(invalidAndBusy);
+    CHECK(r8.blocking.size() == 1 && r8.blocking[0] == Gate::Port,
+          "an invalid port is not also called busy");
+
     // Everything broken at once: the order is stable so the window names the
-    // same first thing to fix on every reload.
+    // same first thing to fix on every reload. A busy port needs a valid port
+    // to be busy, so this set holds six.
     Environment all;
     all.port = parsePort("COM0");
     all.serial.dataBits = 9;
@@ -400,6 +431,7 @@ static void testReadiness()
     all.packageValid = false;
     all.backend = Backend::None;
     all.sessionActive = true;
+    all.portBusyByOther = true;
     const Readiness full = check(all);
     CHECK(full.blocking.size() == 6, "all six gates block");
     CHECK(full.blocking[0] == Gate::Port, "port reported first");

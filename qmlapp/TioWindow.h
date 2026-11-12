@@ -91,6 +91,16 @@ class TioWindow : public QObject {
     // its friendly name, its phase and whether the window is drawing it.
     Q_PROPERTY(QVariantList sessions READ sessions NOTIFY changed)
 
+    // ---- the session's content ----
+    // tio takes its logging parameters once, at launch: --log-file names the
+    // file it writes and --log-strip keeps the escapes out. The switch therefore
+    // decides the *next* launch, and the window only ever reads the file tio
+    // wrote — it never opens the port a second time.
+    Q_PROPERTY(bool captureEnabled READ captureEnabled NOTIFY changed)
+    // True while the focused session runs with capture on: its log exists.
+    Q_PROPERTY(bool sessionCapturing READ sessionCapturing NOTIFY changed)
+    Q_PROPERTY(QString capturePath READ capturePath NOTIFY changed)
+
 public:
     explicit TioWindow(QObject* parent = nullptr);
     ~TioWindow() override;
@@ -151,19 +161,32 @@ public:
     QString sessionToken() const;
     QVariantList sessions() const;
 
+    bool captureEnabled() const;
+    bool sessionCapturing() const;
+    QString capturePath() const;
+
     // ---- session tabs ----
     // The window is session-oriented: every tab binds one port to at most one
     // process, and the cards below draw the focused tab.
     Q_INVOKABLE void focusSession(int index);
-    // Creates a tab for a port no other tab holds, seeded with the default
-    // configuration. Returns false with a notice when the port is taken.
-    Q_INVOKABLE bool newSession(int com);
-    // Duplicates a tab's parameters into a new tab for the same port; refused
-    // while the port is held, since one port carries one process.
+    // Creates a tab with no port: a tab is a place to prepare a session, and the
+    // port is chosen where it is shown (the Port & parameters card). The launch
+    // is what needs a port, and what refuses one already running elsewhere.
+    Q_INVOKABLE bool newSession();
+    // Duplicates a tab's parameters into a new tab with no port.
     Q_INVOKABLE bool cloneSession(int index);
     // Refused while the tab's session runs: the tab is the only handle to it.
     Q_INVOKABLE bool closeSession(int index);
     Q_INVOKABLE void restart();
+
+    // ---- the session's content ----
+    // Applies to the next launch: tio's logging cannot be turned on for a
+    // process already running, and the notice says so.
+    Q_INVOKABLE void setCapture(bool on);
+    // The tail of the log tio wrote, as text (log-strip already removed escapes).
+    Q_INVOKABLE QString captureTail(int maxBytes = 32768) const;
+    Q_INVOKABLE void copyCapture();
+    Q_INVOKABLE bool saveCapture();
 
     // ---- editing ----
     Q_INVOKABLE void selectPort(int com);

@@ -60,7 +60,7 @@ qt_add_library(TioApp SHARED
 )
 target_include_directories(TioApp PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(TioApp PRIVATE Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickControls2
-  setupapi bcrypt advapi32 user32)
+  setupapi bcrypt advapi32 user32 comdlg32)
 set_target_properties(TioApp PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
 foreach(config DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
   set_target_properties(TioApp PROPERTIES RUNTIME_OUTPUT_DIRECTORY_${config} "${CMAKE_CURRENT_SOURCE_DIR}")
@@ -144,7 +144,7 @@ add_test(NAME tio_window_model COMMAND tio_window_tests)
 # window server: no widget is created.
 add_executable(tio_window_tests tests/test_window.cpp qmlapp/TioWindow.cpp qmlapp/TioWindow.h)
 target_include_directories(tio_window_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-target_link_libraries(tio_window_tests PRIVATE Qt6::Core Qt6::Gui setupapi bcrypt advapi32)
+target_link_libraries(tio_window_tests PRIVATE Qt6::Core Qt6::Gui setupapi bcrypt advapi32 comdlg32)
 if(MSVC)
   target_compile_options(tio_window_tests PRIVATE /utf-8 /W4 /permissive-)
 else()

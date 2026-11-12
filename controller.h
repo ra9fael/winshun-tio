@@ -88,9 +88,11 @@ public:
     }
 
 private:
-    // One session tab: a form bound to at most one process. Two tabs never
-    // hold the same port — the port is exclusive from the moment a tab picks
-    // it, so a session can never collide with another one's device.
+    // One session tab: a form bound to at most one process. Tabs may name the
+    // same port while idle — the port becomes exclusive only when a session
+    // starts on it, and the launch gates refuse a port another running session
+    // owns. That is the difference between "a tab I am preparing" and "a port
+    // one process holds".
     struct SessionTab {
         Form form;
         Session session;
@@ -135,11 +137,12 @@ private:
         return nullptr;
     }
 
-    // Whether another tab (not `except`) already holds this port.
-    bool portHeldLocked(int com, const SessionTab* except) const
+    // Whether another tab's *running* session owns this port. An idle tab naming
+    // the same port is not a conflict: nothing holds the device until a launch.
+    bool portRunningLocked(int com, const SessionTab* except) const
     {
         for (const SessionTab& tab : m_tabs)
-            if (&tab != except && tab.form.parsed().com == com)
+            if (&tab != except && tab.form.parsed().com == com && tab.session.active())
                 return true;
         return false;
     }
@@ -260,39 +263,35 @@ public:
     // still re-read the identity (capture is automatic, never a button the
     // user must find), so the preview adopts and recaptures without
     // persisting. The saved form is untouched, so the window's dirty marker
-    // keeps meaning "not saved yet". Returns false with the neutral code in
-    // `error` when another tab already holds the port.
+    // keeps meaning "not saved yet". A port another running session owns is
+    // adopted too: the launch gate names it, and refusing the pick would leave
+    // the window unable to show which port the user just chose.
     bool preview(const Form& form, std::string& error)
     {
         error.clear();
         Notify notify;
-        bool ok = true;
         {
             const std::lock_guard lock(m_mutex);
             SessionTab& tab = activeTabLocked();
-            const Port target = form.parsed();
-            if (portHeldLocked(target.com, &tab)) {
-                error = "the port is held by another session";
-                ok = false;
-            } else {
-                const Port before = tab.form.parsed();
-                tab.form = form;
-                resolveBackendLocked(tab.form);
-                if (target.com != before.com)
-                    refreshIdentityLocked();
-            }
+            const Port before = tab.form.parsed();
+            tab.form = form;
+            resolveBackendLocked(tab.form);
+            if (tab.form.parsed().com != before.com)
+                refreshIdentityLocked();
             notify = m_notify;
         }
         if (notify)
             notify();
-        return ok;
+        return true;
     }
 
     // Starts tio for the port the form names, as its own session tab. A tab
     // already bound to the port is reused (its parameters updated while idle);
-    // no other tab may hold the port. `error` is UTF-8 and already neutral
-    // ("wt started no tio process"), never a localized sentence: callers
-    // localize.
+    // no other running session may own the port. A form without a port is
+    // refused here and only here: a tab may be prepared before its port is
+    // chosen, but nothing starts without one. `error` is UTF-8 and already
+    // neutral ("wt started no tio process"), never a localized sentence:
+    // callers localize.
     bool launch(const Form& form, std::string& error)
     {
         error.clear();
@@ -305,9 +304,13 @@ public:
         {
             const std::lock_guard lock(m_mutex);
             const Port target = form.parsed();
-            tab = tabForPortLocked(target.com);
-            if (portHeldLocked(target.com, tab)) {
-                error = "the port is held by another session";
+            tab = target.ok() ? tabForPortLocked(target.com) : nullptr;
+            if (!target.ok()) {
+                error = "no port is chosen";
+                m_error = L"";
+                notify = m_notify;
+            } else if (portRunningLocked(target.com, tab)) {
+                error = "a session is already active";
                 m_error = L"";
                 notify = m_notify;
             } else {
@@ -337,15 +340,21 @@ public:
                 } else {
                     const std::string token = newToken();
                     const Port port = tab->form.parsed();
+                    // Capture is a launch argument, not a runtime switch: tio can
+                    // only start logging to a file. The file lives in the
+                    // launcher's own dataDir, so reading it back never opens the
+                    // serial port a second time, and closing the tab removes it.
+                    const std::string logFile = tab->form.capture ? capturePathLocked(token) : std::string();
                     tab->session.com = port.com;
                     tab->session.device = port.device();
                     tab->session.token = token;
+                    tab->session.logPath.clear();
 
                     const std::wstring wtPath = findOnPath(L"wt.exe");
                     const std::wstring tioPath = m_runtimeDir + L"\\tio.exe";
                     plan = planLaunch(tab->form.backend,
                         wtPath.empty() ? std::string() : winshun::utf8(wtPath),
-                        winshun::utf8(tioPath), port, tab->form.serial, token);
+                        winshun::utf8(tioPath), port, tab->form.serial, token, logFile);
 
                     if (plan.error != PlanError::None) {
                         markFailed(tab->session, PortState::Unknown);
@@ -359,6 +368,7 @@ public:
                         context.pluginDir = m_pluginDir;
                         context.runtimeDir = m_runtimeDir;
                         context.workDir = winshun::wide(m_dataDir);
+                        tab->session.logPath = logFile;
                         beginStart(tab->session);
                     }
                 }
@@ -445,31 +455,29 @@ private:
 
 public:
 
-    // A new tab, seeded with the given form. The port must be free; the tab
-    // starts idle, so the launch gates decide when it may start.
+    // A new tab, seeded with the given form. The seed may name no port at all:
+    // a tab is a place to prepare a session, and it is the launch that needs a
+    // port. Nothing is exclusive until a session starts, so two idle tabs may
+    // name the same port.
     bool createSession(const Form& seed, std::string& error)
     {
         error.clear();
         Notify notify;
         {
             const std::lock_guard lock(m_mutex);
-            const Port target = seed.parsed();
-            if (portHeldLocked(target.com, nullptr)) {
-                error = "the port is held by another session";
-                m_error = winshun::wide(error);
-            } else {
-                m_tabs.push_back({seed, Session{}});
-                m_activeTab = m_tabs.size() - 1;
-                refreshIdentityLocked();
-                m_error = L"";
-            }
+            m_tabs.push_back({seed, Session{}});
+            m_activeTab = m_tabs.size() - 1;
+            refreshIdentityLocked();
+            m_error = L"";
             notify = m_notify;
         }
         if (notify)
             notify();
-        return error.empty();
+        return true;
     }
 
+    // A new tab with the same parameters but no port: a clone is another session
+    // to prepare, and the port is chosen in the card that shows it.
     bool cloneSession(std::size_t index, std::string& error)
     {
         Form seed;
@@ -478,17 +486,21 @@ public:
             if (index >= m_tabs.size())
                 return false;
             seed = m_tabs[index].form;
+            seed.port.clear();
         }
         return createSession(seed, error);
     }
 
     // Closes a tab. A session that still owns a process refuses: the tab is
-    // the only handle to it, and dropping it would orphan the terminal.
+    // the only handle to it, and dropping it would orphan the terminal. Closing
+    // also removes the tab's capture file: it belongs to this tab, and nothing
+    // else knows its name.
     bool closeSession(std::size_t index, std::string& error)
     {
         error.clear();
         Notify notify;
         bool closed = false;
+        std::string logPath;
         {
             const std::lock_guard lock(m_mutex);
             if (index >= m_tabs.size()) {
@@ -498,6 +510,7 @@ public:
                 error = "the session must be stopped before it is closed";
                 m_error = winshun::wide(error);
             } else {
+                logPath = m_tabs[index].session.logPath;
                 m_tabs.erase(m_tabs.begin() + static_cast<std::ptrdiff_t>(index));
                 if (m_activeTab >= m_tabs.size())
                     m_activeTab = m_tabs.empty() ? 0 : m_tabs.size() - 1;
@@ -510,6 +523,8 @@ public:
         }
         if (notify)
             notify();
+        if (!logPath.empty())
+            ::DeleteFileW(winshun::wide(logPath).c_str());
         return closed;
     }
 
@@ -536,6 +551,17 @@ public:
     {
         const std::lock_guard lock(m_mutex);
         return diagnosticsLocked();
+    }
+
+    // What the focused tab's session has written so far, at most `maxBytes`
+    // from the end. Empty means either "this tab does not capture" or "nothing
+    // has arrived yet"; the caller knows which from the form's capture flag and
+    // shows the two differently.
+    std::string captureText(std::size_t maxBytes) const
+    {
+        const std::lock_guard lock(m_mutex);
+        ensureTabLocked();
+        return readTail(m_tabs[m_activeTab].session.logPath, maxBytes);
     }
 
 public:
@@ -656,6 +682,48 @@ private:
         return winshun::wide(m_dataDir) + L"\\tio.json";
     }
 
+    // Where a capturing session writes: one file per session token, in the
+    // launcher's own dataDir. tio creates it at start; the folder must exist
+    // first.
+    std::string capturePathLocked(const std::string& token) const
+    {
+        const std::wstring dir = winshun::wide(m_dataDir) + L"\\sessions";
+        ::CreateDirectoryW(dir.c_str(), nullptr);
+        return winshun::utf8(dir + L"\\" + winshun::wide(token) + L".log");
+    }
+
+    // The last `maxBytes` of a capture file. The whole file is never read: a
+    // terminal that has been running for hours can grow large, and the window
+    // only shows the tail anyway.
+    static std::string readTail(const std::string& path, std::size_t maxBytes)
+    {
+        if (path.empty())
+            return std::string();
+        HANDLE file = ::CreateFileW(winshun::wide(path).c_str(), GENERIC_READ,
+            FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL,
+            nullptr);
+        if (file == INVALID_HANDLE_VALUE)
+            return std::string();
+        LARGE_INTEGER size{};
+        std::string text;
+        if (::GetFileSizeEx(file, &size) && size.QuadPart > 0) {
+            const std::size_t total = static_cast<std::size_t>(size.QuadPart);
+            const std::size_t want = total < maxBytes ? total : maxBytes;
+            LARGE_INTEGER at{};
+            at.QuadPart = static_cast<LONGLONG>(total - want);
+            if (::SetFilePointerEx(file, at, nullptr, FILE_BEGIN)) {
+                text.resize(want);
+                DWORD read = 0;
+                if (::ReadFile(file, text.data(), static_cast<DWORD>(want), &read, nullptr))
+                    text.resize(read);
+                else
+                    text.clear();
+            }
+        }
+        ::CloseHandle(file);
+        return text;
+    }
+
     void loadSettings()
     {
         const std::lock_guard lock(m_mutex);
@@ -742,6 +810,11 @@ private:
         // a missing value. A saved choice wins while the machine still has it.
         Backend chosen = backendFromId(setting("backend").toString());
         m_form.backend = resolveBackend(m_backends, chosen);
+
+        // Capture is a per-session choice that persists with the rest of the
+        // configuration: the next launch records content. The settings page has
+        // no switch for it, so a missing value means off.
+        m_form.capture = setting("capture").toBool(false);
         m_savedForm = m_form;
     }
 
@@ -761,7 +834,10 @@ private:
 
     bool writeSettingsLocked()
     {
-        winshun::Json::Object object;
+        // Start from what is on disk: the file also carries the window's ui
+        // block, and a save must not drop a fold the user chose.
+        winshun::Json::Object object
+            = m_persisted.isObject() ? m_persisted.toObject() : winshun::Json::Object{};
         object["packageVersion"] = m_packageVersion;
         const Port port = m_form.parsed();
         object["port"] = port.ok() ? "COM" + std::to_string(port.com) : "";
@@ -771,6 +847,7 @@ private:
         object["stopBits"] = static_cast<long long>(m_form.serial.stopBits);
         object["flow"] = std::string(flowName(m_form.serial.flow));
         object["backend"] = std::string(backendId(m_form.backend));
+        object["capture"] = m_form.capture;
         const bool written = writeSettingsObjectLocked(object);
         // The saved form is what "dirty" is measured against, whether or not
         // the file took the write: a failed write must not look saved.
@@ -830,6 +907,7 @@ private:
     {
         Environment env;
         env.port = tab.form.parsed();
+        env.portBusyByOther = env.port.ok() && portRunningLocked(env.port.com, &tab);
         env.serial = tab.form.serial;
         env.identityKnown = m_identityValid;
         env.packageValid = m_package.ok;
@@ -839,7 +917,8 @@ private:
     }
 
     // The default form's gates: these drive the search box's launch row. Its
-    // Session gate is on when a session already runs the default port.
+    // PortBusy gate is on while any session runs on the default port, and its
+    // Session gate is on when one of them is that form's own.
     Readiness defaultReadinessLocked() const
     {
         Environment env;
@@ -850,6 +929,8 @@ private:
         env.packageValid = m_package.ok;
         env.backend = m_form.backend;
         env.sessionActive = bound && bound->session.active();
+        env.portBusyByOther = env.port.ok() && !env.sessionActive
+            && portRunningLocked(env.port.com, nullptr);
         return check(env);
     }
 
@@ -894,8 +975,11 @@ private:
                 const SessionTab& tab = m_tabs[i];
                 if (i)
                     text += " · ";
-                text += "COM" + std::to_string(tab.form.parsed().com) + " "
-                    + std::string(phaseId(tab.session.phase));
+                const Port tabPort = tab.form.parsed();
+                text += tabPort.ok() ? "COM" + std::to_string(tabPort.com) : std::string("no port");
+                text += " " + std::string(phaseId(tab.session.phase));
+                if (tab.form.capture)
+                    text += " capture";
                 if (tab.session.pid)
                     text += " pid " + std::to_string(tab.session.pid);
                 if (i == m_activeTab)
@@ -905,7 +989,13 @@ private:
         text += "\n";
         if (!m_errorCode.empty())
             text += "last error: " + m_errorCode + "\n";
-        text += "privacy   : no serial payload is read or logged; the port path is kept out of shared logs\n";
+        text += std::string("capture   : ")
+            + (m_form.capture ? "on for the next launch, written by tio to dataDir\\sessions"
+                              : "off; nothing is recorded")
+            + "\n";
+        text += "privacy   : no serial payload is read by the launcher; a session writes its own "
+                "terminal output to dataDir only when capture is on, and that file is removed "
+                "when the tab closes\n";
         return text;
     }
 

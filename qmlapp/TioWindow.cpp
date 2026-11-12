@@ -15,9 +15,17 @@
 #include <QClipboard>
 #include <QDesktopServices>
 #include <QDir>
+#include <QFile>
+#include <QFileInfo>
 #include <QGuiApplication>
 #include <QTimer>
 #include <QUrl>
+
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <commdlg.h>
 
 #include <functional>
 #include <mutex>
@@ -110,7 +118,8 @@ void TioWindow::recomputeDirty()
         || m_form.serial.dataBits != saved.serial.dataBits
         || m_form.serial.parity != saved.serial.parity
         || m_form.serial.stopBits != saved.serial.stopBits
-        || m_form.serial.flow != saved.serial.flow || m_form.backend != saved.backend;
+        || m_form.serial.flow != saved.serial.flow || m_form.backend != saved.backend
+        || m_form.capture != saved.capture;
     if (dirty != m_dirty) {
         m_dirty = dirty;
         emit changed();
@@ -452,9 +461,12 @@ QVariantList TioWindow::sessions() const
         row["com"] = com;
         QString name;
         for (const PortInfo& info : snapshot.ports)
-            if (info.com == com && !info.description.empty())
+            if (com > 0 && info.com == com && !info.description.empty())
                 name = fromStd(winshun::utf8(info.description));
-        row["name"] = name.isEmpty() ? QString("COM%1").arg(com) : name;
+        // A tab without a port says nothing above the line that already says
+        // "no port": "COM0" would name a port that does not exist.
+        row["name"] = com <= 0 ? QString()
+                               : (name.isEmpty() ? QString("COM%1").arg(com) : name);
         row["phase"] = fromStd(phaseId(view.session.phase));
         row["running"] = view.session.active();
         row["busy"] = view.session.busy();
@@ -477,14 +489,13 @@ void TioWindow::focusSession(int index)
     emit changed();
 }
 
-bool TioWindow::newSession(int com)
+bool TioWindow::newSession()
 {
-    if (com <= 0)
-        return false;
-    // A new tab starts from the default configuration with the picked port:
-    // the picker only offers ports no tab holds, so the controller accepts.
+    // No port: the tab opens where the user can prepare the session, and the
+    // port is picked in the card that shows it. Nothing is exclusive until a
+    // session starts, so this never fails on a port someone else holds.
     Form seed = core().controller().form();
-    seed.port = L"COM" + std::to_wstring(com);
+    seed.port.clear();
     std::string error;
     if (!core().controller().createSession(seed, error)) {
         emit notice(fromStd(describeError(error, zh())));
@@ -519,6 +530,113 @@ bool TioWindow::closeSession(int index)
     reload();
     recomputeDirty();
     emit changed();
+    return true;
+}
+
+// ---- the session's content --------------------------------------------------------
+
+bool TioWindow::captureEnabled() const
+{
+    return focusedForm().capture;
+}
+
+// The focused tab's session runs *and* was launched with a log: the file it
+// writes is the only content there is.
+bool TioWindow::sessionCapturing() const
+{
+    const Snapshot snapshot = core().controller().snapshot();
+    for (const SessionView& view : snapshot.sessions)
+        if (view.focused)
+            return view.session.active() && !view.session.logPath.empty();
+    return false;
+}
+
+QString TioWindow::capturePath() const
+{
+    const Snapshot snapshot = core().controller().snapshot();
+    for (const SessionView& view : snapshot.sessions)
+        if (view.focused)
+            return fromStd(view.session.logPath);
+    return QString();
+}
+
+void TioWindow::setCapture(bool on)
+{
+    // tio takes --log-file once, when it starts. Turning the switch is still
+    // allowed while a session runs, but it is the next launch that gets it, and
+    // the notice says which launch that is.
+    const bool running = sessionCapturing() || sessionActive();
+    edit([on](Form& form) { form.capture = on; });
+    if (running) {
+        emit notice(on
+            ? (zh() ? "捕获已打开：下一次启动生效（tio 只在启动时接受日志参数）"
+                    : "capture on: it applies to the next launch (tio takes the log flags at launch)")
+            : (zh() ? "捕获已关闭：正在运行的会话仍会写到停止为止"
+                    : "capture off: the running session keeps writing until it stops"));
+        return;
+    }
+    emit notice(on ? (zh() ? "捕获已打开：启动后 tio 把收发写进本机日志"
+                           : "capture on: once launched, tio writes its traffic to a local log")
+                   : (zh() ? "捕获已关闭" : "capture off"));
+}
+
+QString TioWindow::captureTail(int maxBytes) const
+{
+    if (maxBytes <= 0)
+        maxBytes = 32768;
+    return fromStd(core().controller().captureText(static_cast<std::size_t>(maxBytes)));
+}
+
+void TioWindow::copyCapture()
+{
+    const QString text = captureTail(1 << 20);
+    if (text.isEmpty()) {
+        emit notice(zh() ? "还没有内容：先启动会话并打开捕获"
+                         : "nothing captured yet: launch the session with capture on");
+        return;
+    }
+    if (QClipboard* clipboard = QGuiApplication::clipboard()) {
+        clipboard->setText(text);
+        emit notice(zh() ? "已复制本次捕获的内容" : "Copied what this session captured");
+    }
+}
+
+// A save dialog, because the host's Qt has no QuickDialogs (C:\Program
+// Files\WinShun\qml\QtQuick\Dialogs is an empty stub): comdlg32 ships with
+// Windows, and the dialog is the one every text editor on this machine shows.
+bool TioWindow::saveCapture()
+{
+    const QString text = captureTail(1 << 20);
+    if (text.isEmpty()) {
+        emit notice(zh() ? "还没有内容：先启动会话并打开捕获"
+                         : "nothing captured yet: launch the session with capture on");
+        return false;
+    }
+
+    wchar_t path[MAX_PATH] = L"tio-capture.txt";
+    OPENFILENAMEW ofn{};
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = GetActiveWindow();
+    ofn.lpstrFilter = L"Text (*.txt)\0*.txt\0All files (*.*)\0*.*\0";
+    ofn.lpstrFile = path;
+    ofn.nMaxFile = MAX_PATH;
+    ofn.lpstrDefExt = L"txt";
+    ofn.lpstrTitle = zh() ? L"另存为文本" : L"Save as text";
+    ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
+    if (!GetSaveFileNameW(&ofn))
+        return false;  // cancelled: nothing to report, nothing changed
+
+    const QString target = QString::fromWCharArray(path);
+    QFile file(target);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        emit notice(zh() ? "写不进这个文件：" + QFileInfo(target).fileName()
+                         : "could not write " + QFileInfo(target).fileName());
+        return false;
+    }
+    file.write(text.toUtf8());
+    file.close();
+    emit notice(zh() ? "已另存为 " + QFileInfo(target).fileName()
+                     : "saved as " + QFileInfo(target).fileName());
     return true;
 }
 

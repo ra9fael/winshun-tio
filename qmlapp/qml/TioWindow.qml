@@ -36,6 +36,42 @@ Window {
         function onNotice(text) { footer.show(text) }
     }
 
+    // ---- the session's content -----------------------------------------------
+    // What the focused session captured, kept here rather than read on every
+    // repaint: the view polls while a session runs and stops when it does.
+    property string captureBody: ""
+    // "—" is what the model says when the tab names no port.
+    readonly property bool hasPort: typeof tio !== "undefined" && tio.portText !== "—"
+
+    function refreshCapture() {
+        if (typeof tio === "undefined")
+            return
+        // tio writes a newline when it starts, and a whitespace-only tail would
+        // hide the "nothing captured yet" placeholder behind an empty box.
+        const tail = tio.captureTail(32768)
+        const body = tail.trim().length === 0 ? "" : tail
+        if (body !== window.captureBody)
+            window.captureBody = body
+    }
+
+    // A port a *running* session holds. It stays selectable — the tab simply
+    // records the choice — but the launch refuses it, so the row says why
+    // before the click rather than after.
+    function portRunningElsewhere(com) {
+        const list = typeof tio !== "undefined" ? tio.sessions : []
+        for (let i = 0; i < list.length; ++i)
+            if (list[i].com === com && list[i].running && !list[i].focused)
+                return true
+        return false
+    }
+
+    Timer {
+        interval: 1000
+        repeat: true
+        running: typeof tio !== "undefined" && tio.sessionCapturing
+        onTriggered: window.refreshCapture()
+    }
+
     // A session can also leave on its own (the user closes the terminal): the
     // only reliable way to notice is to ask the controller again. Ticking only
     // while a session is active keeps an idle window cheap.
@@ -106,81 +142,16 @@ Window {
 
 
     readonly property int sessionStripHeight: 44
-    property var newSessionPorts: []
-
-    // The picker: a menu anchored under the ＋, not a card in the page.
-    Menu {
-        id: newSessionDialog
-        width: 380
-        padding: 6
-
-        background: Rectangle {
-            radius: DesignTokens.controlRadius
-            color: DesignTokens.cardColor
-            border.width: 1
-            border.color: DesignTokens.borderColor
-        }
-
-        ColumnLayout {
-            width: parent.width
-            spacing: 4
-
-            Label {
-                Layout.fillWidth: true
-                Layout.leftMargin: 6
-                text: window.tr("新建会话：选一个没人占用的端口",
-                                "New session: pick a port nobody holds")
-                color: DesignTokens.faintColor
-                font.pixelSize: DesignTokens.fontSmall
-            }
-            Repeater {
-                model: window.newSessionPorts
-                delegate: ItemDelegate {
-                    id: newPortOption
-                    required property var modelData
-                    Layout.fillWidth: true
-                    height: DesignTokens.rowHeight + 14
-                    hoverEnabled: true
-                    background: Rectangle {
-                        radius: DesignTokens.smallRadius
-                        color: newPortOption.hovered ? DesignTokens.hoverColor : "transparent"
-                    }
-                    contentItem: ColumnLayout {
-                        spacing: 0
-                        Label {
-                            text: newPortOption.modelData.name
-                            color: DesignTokens.textColor
-                            font.pixelSize: DesignTokens.fontCaption
-                            elide: Text.ElideRight
-                            Layout.fillWidth: true
-                        }
-                        Label {
-                            text: newPortOption.modelData.device + " · "
-                                  + newPortOption.modelData.identity
-                            color: DesignTokens.mutedColor
-                            font.pixelSize: DesignTokens.fontSmall
-                            elide: Text.ElideRight
-                            Layout.fillWidth: true
-                        }
-                    }
-                    onClicked: {
-                        tio.newSession(newPortOption.modelData.com)
-                        newSessionDialog.close()
-                    }
-                }
-            }
-        }
-    }
 
     ColumnLayout {
         anchors.fill: parent
         spacing: 0
 
-    // ---- session tab strip: browser-style; the ＋ and its picker live here ----
-    // One tab binds one port to at most one process; the pane below draws the
-    // focused tab. The ＋ opens a dropdown of the ports nobody holds, anchored
-    // under the strip — never a card at the bottom of the page. Closing
-    // refuses while the session runs: the tab is the only handle to it.
+    // ---- session tab strip: browser-style; the ＋ creates a session ----------
+    // A tab is a place to prepare a session: it may name no port yet, and the
+    // port is chosen in the card below. Switching is the only thing a tab click
+    // does; closing refuses while the session runs, because the tab is the only
+    // handle to its process.
     RowLayout {
         id: tabBar
         Layout.fillWidth: true
@@ -195,7 +166,10 @@ Window {
             delegate: Rectangle {
                 required property var modelData
 
-                Layout.preferredHeight: sessionTabColumn.implicitHeight + 18
+                // One height for every tab: a tab that names its port draws two
+                // lines and one without a port draws one, and the strip must not
+                // step up and down as tabs are added or focused.
+                Layout.preferredHeight: 52
                 Layout.preferredWidth: sessionTabColumn.implicitWidth
                     + closeGlyph.implicitWidth + 40
                 radius: DesignTokens.smallRadius
@@ -211,6 +185,16 @@ Window {
                     height: 2
                     visible: modelData.focused
                     color: DesignTokens.accentColor
+                }
+
+                // The tab-wide click area is declared FIRST, under the content:
+                // the ✕ below keeps its own clicks. The tab's words are drawn
+                // with Text, not Label — a Control would take the press itself
+                // and the tab would only answer to clicks on its blank margins.
+                MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: if (!modelData.focused) tio.focusSession(modelData.index)
                 }
 
                 RowLayout {
@@ -233,23 +217,36 @@ Window {
 
                         RowLayout {
                             spacing: 6
-                            Label {
-                                text: "COM" + modelData.com
+                            // A tab with no port says so instead of "COM0": the
+                            // number is not a port the user chose.
+                            Text {
+                                text: modelData.com > 0
+                                      ? "COM" + modelData.com
+                                      : window.tr("未指定", "no port")
                                 color: DesignTokens.textColor
                                 font.pixelSize: DesignTokens.fontCaption
                                 font.weight: modelData.focused ? Font.DemiBold : Font.Normal
                             }
-                            // Closing refuses while the session runs; the
-                            // notice names the reason.
-                            Label {
-                                id: closeGlyph
-                                text: "✕"
-                                color: DesignTokens.mutedColor
-                                font.pixelSize: DesignTokens.fontSmall
+                            // The close glyph owns a small Item of its own: its
+                            // MouseArea is a sibling of the Text, not a child of
+                            // it, so the hit area is the Item's box and does not
+                            // depend on how the text lays its children out.
+                            Item {
+                                id: closeButton
+                                Layout.preferredWidth: closeGlyph.implicitWidth + 8
+                                Layout.preferredHeight: closeGlyph.implicitHeight + 8
+
+                                Text {
+                                    id: closeGlyph
+                                    anchors.centerIn: parent
+                                    text: "✕"
+                                    color: DesignTokens.mutedColor
+                                    font.pixelSize: DesignTokens.fontSmall
+                                }
 
                                 MouseArea {
+                                    id: closeArea
                                     anchors.fill: parent
-                                    anchors.margins: -4
                                     cursorShape: Qt.PointingHandCursor
                                     onClicked: {
                                         if (modelData.running || modelData.busy)
@@ -262,8 +259,9 @@ Window {
                                 }
                             }
                         }
-                        Label {
+                        Text {
                             Layout.maximumWidth: 150
+                            visible: text.length > 0
                             text: modelData.name
                             color: DesignTokens.mutedColor
                             font.pixelSize: DesignTokens.fontSmall
@@ -271,19 +269,13 @@ Window {
                         }
                     }
                 }
-
-                MouseArea {
-                    anchors.fill: parent
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: if (!modelData.focused) tio.focusSession(modelData.index)
-                }
             }
         }
 
         Item { Layout.fillWidth: true }
 
-        // The ＋: a plain glyph button whose dropdown lists the free ports,
-        // anchored right here under the strip.
+        // The ＋: one click creates a session, no port asked for. The port is
+        // chosen where it is shown, in the card below.
         Item {
             id: plusItem
             Layout.preferredWidth: plusGlyph.implicitWidth + 16
@@ -300,28 +292,7 @@ Window {
                     anchors.fill: parent
                     anchors.margins: -6
                     cursorShape: Qt.PointingHandCursor
-                    onClicked: {
-                        // Only ports no tab holds are offered.
-                        const held = new Set()
-                        const list = typeof tio !== "undefined" ? tio.sessions : []
-                        for (let i = 0; i < list.length; ++i)
-                            held.add(list[i].com)
-                        const free = []
-                        const ports = typeof tio !== "undefined" ? tio.ports : []
-                        for (let i = 0; i < ports.length; ++i)
-                            if (!held.has(ports[i].com))
-                                free.push(ports[i])
-                        newSessionPorts = free
-                        if (free.length === 0) {
-                            footer.show(window.tr("没有空闲端口：每个会话占用一个端口",
-                                                  "no free port: every session holds one"))
-                            return
-                        }
-                        // Anchor the picker under the ＋, wherever the strip is.
-                        const mapped = plusItem.mapToItem(window.contentItem, 0, 0)
-                        newSessionDialog.popup(window.contentItem, mapped.x,
-                            mapped.y + plusItem.height + 4)
-                    }
+                    onClicked: tio.newSession()
                 }
             }
         }
@@ -380,8 +351,10 @@ Window {
                         },
                         TokenButton {
                             text: window.tr("克隆", "Clone")
+                            // A clone copies the parameters, not the port: two
+                            // idle tabs may name one port, so there is nothing
+                            // to run out of.
                             enabled: typeof tio !== "undefined" && tio.sessions.length > 0
-                                     && tio.sessions.length < tio.ports.length
                             onClicked: {
                                 const list = tio.sessions
                                 for (let i = 0; i < list.length; ++i)
@@ -416,20 +389,154 @@ Window {
                         color: DesignTokens.mutedColor
                         font.pixelSize: DesignTokens.fontSmall
                         text: window.tr(
-                            "“已启动”不等于“端口已打开”：插件不读 tio 的终端输出，端口状态只有在上游给出可验证信号时才会变化。",
-                            "\"Started\" is not \"port open\": the plugin does not read tio's terminal output, so the "
-                            + "port state only changes when the upstream gives a verifiable signal.")
+                            "“已启动”不等于“端口已打开”：端口状态只有在上游给出可验证信号时才会变化。打开捕获时，插件读的是 tio 自己写下的日志，不是串口。",
+                            "\"Started\" is not \"port open\": the port state only changes when the upstream gives a "
+                            + "verifiable signal. With capture on, the plugin reads the log tio writes — never the port.")
+                    }
+
+                    // ---- the session's content ----
+                    // A ruled sub-head inside the same card, not a card of its
+                    // own: the content belongs to this session, and a session
+                    // without a log simply has none.
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.topMargin: 8
+                        implicitHeight: 1
+                        color: DesignTokens.borderColor
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 8
+
+                        Rectangle {
+                            id: captureDot
+                            width: 7
+                            height: 7
+                            radius: 3.5
+                            color: typeof tio !== "undefined" && tio.sessionCapturing
+                                   ? DesignTokens.okColor : DesignTokens.faintColor
+                        }
+                        Label {
+                            text: window.tr("会话内容", "Session content")
+                            color: DesignTokens.mutedColor
+                            font.pixelSize: DesignTokens.fontSmall
+                        }
+                        Label {
+                            text: typeof tio === "undefined" ? ""
+                                  : tio.sessionCapturing
+                                    ? window.tr("捕获中", "capturing")
+                                    : tio.captureEnabled
+                                      ? window.tr("已开启 · 启动后记录", "on · records once launched")
+                                      : window.tr("未捕获", "not capturing")
+                            color: typeof tio !== "undefined" && tio.sessionCapturing
+                                   ? DesignTokens.okColor : DesignTokens.faintColor
+                            font.pixelSize: DesignTokens.fontSmall
+                        }
+                        Item { Layout.fillWidth: true }
+                        TokenButton {
+                            // tio takes --log-file once, when it starts, so this
+                            // switch is the next launch's. The notice says so
+                            // when a session is already running.
+                            text: typeof tio !== "undefined" && tio.captureEnabled
+                                  ? window.tr("关闭捕获", "Stop capture")
+                                  : window.tr("开始捕获", "Start capture")
+                            onClicked: tio.setCapture(!tio.captureEnabled)
+                        }
+                    }
+
+                    Label {
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                        color: DesignTokens.mutedColor
+                        font.pixelSize: DesignTokens.fontSmall
+                        text: !window.hasPort
+                              ? window.tr("先在端口与参数里选择一个串口", "pick a port in Port & parameters first")
+                              : !(typeof tio !== "undefined" && tio.captureEnabled)
+                                ? window.tr("打开捕获：启动时让 tio 用它自己的 --log-file 把收发写进本机日志，插件只读这个文件，不碰串口。",
+                                            "Turn capture on and the launch lets tio write its own --log-file inside this "
+                                            + "machine's dataDir; the plugin only reads that file, never the port.")
+                                : !(typeof tio !== "undefined" && tio.sessionActive)
+                                  ? window.tr("捕获已打开：启动后开始记录。", "Capture is on: it starts recording once the session runs.")
+                                  : window.tr("日志由 tio 写入 dataDir；停止会话后仍然可以复制或另存。",
+                                              "tio writes the log into dataDir; after the session stops it can still be copied or saved.")
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 160
+                        radius: DesignTokens.radius
+                        color: DesignTokens.sunkenColor
+                        border.width: 1
+                        border.color: DesignTokens.borderColor
+
+                        ScrollView {
+                            anchors.fill: parent
+                            anchors.margins: 6
+                            clip: true
+
+                            TextArea {
+                                id: captureView
+                                readOnly: true
+                                selectByMouse: true
+                                text: window.captureBody
+                                wrapMode: TextArea.NoWrap
+                                color: DesignTokens.textColor
+                                // Monospace: this is a terminal log, and the
+                                // columns are what the user reads.
+                                font.family: "Consolas"
+                                font.pixelSize: DesignTokens.fontSmall
+                                background: null
+                                placeholderText: typeof tio !== "undefined" && tio.sessionCapturing
+                                                 ? window.tr("等设备说话…", "waiting for the device to speak…")
+                                                 : window.tr("这里只有 tio 的日志：打开捕获并启动会话后才有内容。",
+                                                             "only the log tio writes appears here: turn capture on and launch.")
+                            }
+                        }
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 8
+
+                        TokenButton {
+                            text: window.tr("复制全部", "Copy all")
+                            enabled: window.captureBody.length > 0
+                            onClicked: tio.copyCapture()
+                        }
+                        TokenButton {
+                            text: window.tr("另存为文本", "Save as text")
+                            enabled: window.captureBody.length > 0
+                            onClicked: tio.saveCapture()
+                        }
+                        Item { Layout.fillWidth: true }
+                        Label {
+                            Layout.maximumWidth: 380
+                            wrapMode: Text.WordWrap
+                            color: DesignTokens.faintColor
+                            font.pixelSize: DesignTokens.fontSmall
+                            horizontalAlignment: Text.AlignRight
+                            text: window.tr("内容只留在本机：不上传、不遥测。删除会话即删日志。",
+                                            "It stays on this machine: no upload, no telemetry. Closing the session deletes the log.")
+                        }
                     }
                 }
 
-                // ---- port ----
+                // ---- port and parameters ----
+                // One card, because choosing the port and choosing the bytes it
+                // is opened with is one decision. A tab may name no port at all:
+                // the box then says 未指定 and the hint says where to pick one.
                 GroupCard {
                     id: portCard
-                    title: window.tr("端口", "Port")
+                    title: window.tr("端口与参数", "Port & parameters")
                     collapsed: typeof tio !== "undefined" && tio.cardCollapsed(portCard.title)
                     onToggled: function (folded) { tio.setCardCollapsed(portCard.title, folded) }
-                    note: typeof tio !== "undefined" && tio.portText.length > 0
-                          ? tio.portText : window.tr("只读枚举；输入不改端口号", "read-only enumeration")
+                    note: typeof tio !== "undefined" && tio.sessionActive
+                          ? window.tr("会话运行中 · 锁定", "session running · locked")
+                          : typeof tio !== "undefined" && tio.portText !== "—"
+                            ? tio.portText
+                            : window.tr("只列 tio 3.9 接受的取值", "only the values tio 3.9 takes")
+                    warn: typeof tio !== "undefined" && tio.sessionActive
 
                     FieldRow {
                         label: window.tr("端口", "Port")
@@ -440,6 +547,9 @@ Window {
                             id: portBox
                             Layout.fillWidth: true
                             Layout.preferredHeight: DesignTokens.rowHeight
+                            // Parameters are the running session's: it took them
+                            // at launch, and nothing here reaches it.
+                            enabled: !(typeof tio !== "undefined" && tio.sessionActive)
                             model: typeof tio !== "undefined" ? tio.ports : []
                             // A screenshot run may ask for the list to start
                             // open. It waits for the window to be on screen:
@@ -472,7 +582,13 @@ Window {
                                 if (row)
                                     tio.selectPort(row.com)
                             }
-                            displayText: currentIndex >= 0 ? currentText : window.tr("（无可用端口）", "(no port)")
+                            // A tab with no port is not a tab with no ports on
+                            // the machine: the two say different things.
+                            displayText: currentIndex >= 0
+                                         ? currentText
+                                         : model.length === 0
+                                           ? window.tr("（无可用端口）", "(no port)")
+                                           : window.tr("未指定", "unspecified")
                             delegate: ItemDelegate {
                                 id: portOption
                                 required property var modelData
@@ -502,6 +618,18 @@ Window {
                                         elide: Text.ElideRight
                                         Layout.fillWidth: true
                                     }
+                                    // Selectable, but the launch will say no:
+                                    // "one port, one process" is the rule, and
+                                    // the row names it here.
+                                    Label {
+                                        visible: window.portRunningElsewhere(modelData.com)
+                                        text: window.tr("这个端口已经在另一个会话里运行",
+                                                        "this port already runs in another session")
+                                        color: DesignTokens.warnColor
+                                        font.pixelSize: DesignTokens.fontSmall
+                                        elide: Text.ElideRight
+                                        Layout.fillWidth: true
+                                    }
                                 }
                             }
                         }
@@ -510,6 +638,83 @@ Window {
                             text: window.tr("刷新", "Refresh")
                             Layout.preferredHeight: DesignTokens.rowHeight
                             onClicked: tio.refresh()
+                        }
+                    }
+
+                    // Where to pick a port, said once, where the box is.
+                    Label {
+                        Layout.fillWidth: true
+                        visible: !window.hasPort
+                        wrapMode: Text.WordWrap
+                        color: DesignTokens.warnColor
+                        font.pixelSize: DesignTokens.fontSmall
+                        text: window.tr("先在端口与参数里选择一个串口：启动需要它。",
+                                        "pick a port here first: the launch needs one.")
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.topMargin: 4
+                        implicitHeight: 1
+                        color: DesignTokens.borderColor
+                    }
+
+                    FieldRow {
+                        label: window.tr("波特率", "Baud rate")
+                        TokenComboBox {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: DesignTokens.rowHeight
+                            enabled: !(typeof tio !== "undefined" && tio.sessionActive)
+                            model: typeof tio !== "undefined" ? tio.baudrateOptions : []
+                            currentIndex: typeof tio !== "undefined"
+                                          ? Math.max(0, model.indexOf(tio.baudrate)) : 0
+                            onActivated: function (index) { tio.setBaudrate(model[index]) }
+                        }
+                    }
+                    // A few values each: the host's plugin pages show choices like
+                    // these side by side on a segmented track (TokenSegmented),
+                    // not one dropdown per row. The baud rate keeps its dropdown:
+                    // it lists every rate tio 3.9 takes, too many for a row.
+                    FieldRow {
+                        label: window.tr("数据位", "Data bits")
+                        TokenSegmented {
+                            Layout.fillWidth: true
+                            enabled: !(typeof tio !== "undefined" && tio.sessionActive)
+                            model: typeof tio !== "undefined" ? tio.dataBitsOptions : []
+                            value: typeof tio !== "undefined" ? tio.dataBits : ""
+                            onPicked: function (choice) { tio.setDataBits(choice) }
+                        }
+                    }
+                    FieldRow {
+                        label: window.tr("校验", "Parity")
+                        TokenSegmented {
+                            Layout.fillWidth: true
+                            enabled: !(typeof tio !== "undefined" && tio.sessionActive)
+                            model: typeof tio !== "undefined" ? tio.parityOptions : []
+                            value: typeof tio !== "undefined" ? tio.parity : ""
+                            onPicked: function (choice) { tio.setParity(choice) }
+                        }
+                    }
+                    FieldRow {
+                        label: window.tr("停止位", "Stop bits")
+                        TokenSegmented {
+                            Layout.fillWidth: true
+                            enabled: !(typeof tio !== "undefined" && tio.sessionActive)
+                            model: typeof tio !== "undefined" ? tio.stopBitsOptions : []
+                            value: typeof tio !== "undefined" ? tio.stopBits : ""
+                            onPicked: function (choice) { tio.setStopBits(choice) }
+                        }
+                    }
+                    FieldRow {
+                        label: window.tr("流控", "Flow control")
+                        hint: window.tr("hard 时 RTS 由流控管理，不承诺固定电平",
+                                        "with hard flow the RTS follows the flow, not a fixed level")
+                        TokenSegmented {
+                            Layout.fillWidth: true
+                            enabled: !(typeof tio !== "undefined" && tio.sessionActive)
+                            model: typeof tio !== "undefined" ? tio.flowOptions : []
+                            value: typeof tio !== "undefined" ? tio.flow : ""
+                            onPicked: function (choice) { tio.setFlow(choice) }
                         }
                     }
                 }
@@ -524,10 +729,13 @@ Window {
                     title: window.tr("设备详情", "Device details")
                     collapsed: typeof tio !== "undefined" && tio.cardCollapsed(detailsCard.title, true)
                     onToggled: function (folded) { tio.setCardCollapsed(detailsCard.title, folded) }
-                    note: typeof tio !== "undefined" && tio.identityValid
-                          ? window.tr("采集于 ", "captured at ") + tio.identityTime
-                          : window.tr("身份未知：只能确认当前端口", "unknown: only the current port is confirmed")
-                    warn: !(typeof tio !== "undefined" && tio.identityValid)
+                    note: typeof tio !== "undefined" && !window.hasPort
+                          ? window.tr("未选择串口：没有可确认的身份",
+                                      "no port chosen: no identity to confirm")
+                          : typeof tio !== "undefined" && tio.identityValid
+                            ? window.tr("采集于 ", "captured at ") + tio.identityTime
+                            : window.tr("身份未知：只能确认当前端口", "unknown: only the current port is confirmed")
+                    warn: !(typeof tio !== "undefined" && window.hasPort && tio.identityValid)
 
                     // One row per fact, and a row only for a fact the
                     // device actually reports.
@@ -580,69 +788,6 @@ Window {
                                     + tio.identityProblem
                                   : window.tr("正常", "no problem reported")
                             warn: typeof tio !== "undefined" && tio.identityProblem.length > 0
-                        }
-                    }
-                }
-
-                // ---- serial parameters ----
-                GroupCard {
-                    id: serialCard
-                    title: window.tr("串口参数", "Serial parameters")
-                    collapsed: typeof tio !== "undefined" && tio.cardCollapsed(serialCard.title)
-                    onToggled: function (folded) { tio.setCardCollapsed(serialCard.title, folded) }
-                    note: window.tr("只列 tio 3.9 接受的取值", "only the values tio 3.9 takes")
-
-                    FieldRow {
-                        label: window.tr("波特率", "Baud rate")
-                        TokenComboBox {
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: DesignTokens.rowHeight
-                            model: typeof tio !== "undefined" ? tio.baudrateOptions : []
-                            currentIndex: typeof tio !== "undefined"
-                                          ? Math.max(0, model.indexOf(tio.baudrate)) : 0
-                            onActivated: function (index) { tio.setBaudrate(model[index]) }
-                        }
-                    }
-                    // A few values each: the host's plugin pages show choices like
-                    // these side by side on a segmented track (TokenSegmented),
-                    // not one dropdown per row. The baud rate keeps its dropdown:
-                    // it lists every rate tio 3.9 takes, too many for a row.
-                    FieldRow {
-                        label: window.tr("数据位", "Data bits")
-                        TokenSegmented {
-                            Layout.fillWidth: true
-                            model: typeof tio !== "undefined" ? tio.dataBitsOptions : []
-                            value: typeof tio !== "undefined" ? tio.dataBits : ""
-                            onPicked: function (choice) { tio.setDataBits(choice) }
-                        }
-                    }
-                    FieldRow {
-                        label: window.tr("校验", "Parity")
-                        TokenSegmented {
-                            Layout.fillWidth: true
-                            model: typeof tio !== "undefined" ? tio.parityOptions : []
-                            value: typeof tio !== "undefined" ? tio.parity : ""
-                            onPicked: function (choice) { tio.setParity(choice) }
-                        }
-                    }
-                    FieldRow {
-                        label: window.tr("停止位", "Stop bits")
-                        TokenSegmented {
-                            Layout.fillWidth: true
-                            model: typeof tio !== "undefined" ? tio.stopBitsOptions : []
-                            value: typeof tio !== "undefined" ? tio.stopBits : ""
-                            onPicked: function (choice) { tio.setStopBits(choice) }
-                        }
-                    }
-                    FieldRow {
-                        label: window.tr("流控", "Flow control")
-                        hint: window.tr("hard 时 RTS 由流控管理，不承诺固定电平",
-                                        "with hard flow the RTS follows the flow, not a fixed level")
-                        TokenSegmented {
-                            Layout.fillWidth: true
-                            model: typeof tio !== "undefined" ? tio.flowOptions : []
-                            value: typeof tio !== "undefined" ? tio.flow : ""
-                            onPicked: function (choice) { tio.setFlow(choice) }
                         }
                     }
                 }
@@ -951,11 +1096,15 @@ Window {
 
                     Label {
                         Layout.fillWidth: true
-                        text: typeof tio !== "undefined" && tio.canLaunch
-                              ? window.tr("就绪", "Ready")
-                              : window.tr("启动被阻塞：", "launch blocked: ")
-                                + (typeof tio !== "undefined" ? tio.blockedReason : "")
-                        color: typeof tio !== "undefined" && tio.canLaunch
+                        // While a session runs, "launch blocked: session" would
+                        // read as a fault. The state itself is the news.
+                        text: typeof tio !== "undefined" && tio.sessionActive
+                              ? window.tr("会话运行中", "session running")
+                              : typeof tio !== "undefined" && tio.canLaunch
+                                ? window.tr("就绪", "Ready")
+                                : window.tr("启动被阻塞：", "launch blocked: ")
+                                  + (typeof tio !== "undefined" ? tio.blockedReason : "")
+                        color: typeof tio !== "undefined" && (tio.canLaunch || tio.sessionActive)
                                ? DesignTokens.mutedColor : DesignTokens.warnColor
                         font.pixelSize: DesignTokens.fontSmall
                         elide: Text.ElideRight
@@ -978,8 +1127,8 @@ Window {
                     // sentence: it is the reason the user needs to read.
                     text: typeof tio !== "undefined" && tio.errorText.length > 0
                           ? tio.errorText
-                          : window.tr("终端由 Windows Terminal 或 conhost 提供；插件不读取、不显示、不记录串口内容。",
-                                      "Windows Terminal or conhost provides the terminal; the plugin never reads, renders or logs serial content.")
+                          : window.tr("插件不碰串口：打开捕获时，只读 tio 自己写在本机 dataDir 的日志。",
+                                      "The plugin never touches the port; with capture on it reads only the log tio writes under dataDir.")
 
                     property string base: text
                     function show(text) {

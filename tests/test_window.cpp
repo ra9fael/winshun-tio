@@ -229,59 +229,89 @@ static void testPortSelection()
         model.portText().toStdString());
 }
 
-// The window is session-oriented: tabs bind ports, and two tabs never share
-// one. These checks exercise the tab lifecycle on the model, without launching
-// any process (a real launch is the native probe's business).
+// The window is session-oriented: a tab is a place to prepare a session, and it
+// may name no port at all. The port is chosen in the card that shows it, and
+// only a launch needs one. These checks exercise the lifecycle on the model,
+// without launching any process (a real launch is the native probe's business).
 static void testSessionTabs()
 {
     TioWindow model;
     model.refresh();
 
     const QVariantList ports = model.ports();
-    if (ports.size() < 2) {
-        // One port: the tab lifecycle needs a second free port to be visible.
-        std::printf("INFO only one port on this machine: the tab lifecycle is not checked\n");
+    if (ports.isEmpty()) {
+        std::printf("INFO no port on this machine: the tab lifecycle is not checked\n");
         return;
     }
 
     CHECK(model.sessions().size() >= 1, "the window always has a tab");
-    const int firstIndex = 0;
-    const int firstCom = model.sessions().first().toMap().value("com").toInt();
 
-    // A second tab, on the port the first does not hold.
-    const int otherCom = ports.at(1).toMap().value("com").toInt() == firstCom
-        ? ports.at(0).toMap().value("com").toInt()
-        : ports.at(1).toMap().value("com").toInt();
-    if (otherCom == firstCom) {
-        std::printf("INFO the machine reports one port twice: the tab lifecycle is not checked\n");
-        return;
-    }
-    CHECK(model.newSession(otherCom), "a second tab opens");
+    // ＋: a tab with no port, focused, and the form says so.
+    CHECK(model.newSession(), "a second tab opens without asking for a port");
     CHECK(model.sessions().size() == 2, "two tabs now");
-    CHECK(model.sessions().at(1).toMap().value("focused").toBool(),
-        "the new tab takes the focus");
-    CHECK(model.portText() == QString("COM%1").arg(otherCom),
-        "the focused tab binds the new port", model.portText().toStdString());
+    CHECK(model.sessions().at(1).toMap().value("focused").toBool(), "the new tab takes the focus");
+    CHECK(model.sessions().at(1).toMap().value("com").toInt() == 0, "the new tab names no port");
+    CHECK(model.portText() == QString::fromUtf8("—"), "the form shows no port",
+        model.portText().toStdString());
+    CHECK(!model.canLaunch(), "a tab without a port cannot launch");
+    CHECK(!model.blockedReason().isEmpty(), "the gate names why",
+        model.blockedReason().toStdString());
 
-    // Exclusivity: the port the first tab holds is refused for the second.
-    CHECK(!model.newSession(firstCom), "a port one tab holds is refused for another");
-    CHECK(model.sessions().size() == 2, "the refusal did not create a tab");
+    // A port picked in the card is the tab's, and the gate answers for it.
+    const int firstCom = ports.at(0).toMap().value("com").toInt();
+    model.selectPort(firstCom);
+    CHECK(model.portText() == QString("COM%1").arg(firstCom), "the port was picked",
+        model.portText().toStdString());
+    CHECK(model.sessions().at(1).toMap().value("com").toInt() == firstCom,
+        "the tab follows the card");
 
-    // Focus moves, the form follows: each tab names its own device.
-    model.focusSession(firstIndex);
-    CHECK(model.sessions().at(0).toMap().value("focused").toBool(), "the focus moved back");
-    CHECK(model.portText() == QString("COM%1").arg(firstCom),
-        "the form follows the focused tab", model.portText().toStdString());
+    // Cloning copies the parameters and drops the port: a clone is another
+    // session to prepare, not the same port twice. Two idle tabs may name one
+    // port — nothing is exclusive until a session starts.
+    CHECK(model.cloneSession(1), "cloning copies the parameters");
+    CHECK(model.sessions().size() == 3, "the clone added a tab");
+    CHECK(model.sessions().at(2).toMap().value("com").toInt() == 0, "the clone names no port");
+    CHECK(model.portText() == QString::fromUtf8("—"), "the clone's form shows no port",
+        model.portText().toStdString());
 
-    // Cloning copies parameters but the port is held: refused, no tab added.
-    CHECK(!model.cloneSession(firstIndex), "cloning a tab that holds its port is refused");
-    CHECK(model.sessions().size() == 2, "the refused clone added no tab");
+    // Focus moves, the form follows: each tab names its own state.
+    model.focusSession(1);
+    CHECK(model.portText() == QString("COM%1").arg(firstCom), "the form follows the focused tab",
+        model.portText().toStdString());
 
     // Closing: an idle tab closes; the window is never left without a tab.
-    CHECK(model.closeSession(1), "the idle second tab closes");
+    CHECK(model.closeSession(2), "the idle clone closes");
+    CHECK(model.sessions().size() == 2, "two tabs remain");
+    CHECK(model.closeSession(1), "the other idle tab closes");
     CHECK(model.sessions().size() == 1, "one tab remains");
     CHECK(model.sessions().first().toMap().value("focused").toBool(),
         "the focus fell back to the remaining tab");
+}
+
+// Capture is decided before the launch, because tio takes --log-file once, at
+// launch. The switch is the form's, so it saves and reloads like any parameter,
+// and an idle session has nothing to show.
+static void testCaptureSwitch()
+{
+    TioWindow model;
+    model.refresh();
+
+    const bool before = model.captureEnabled();
+    model.setCapture(!before);
+    CHECK(model.captureEnabled() == !before, "the capture switch took the edit");
+    CHECK(model.dirty(), "the switch makes the form dirty");
+    CHECK(!model.sessionCapturing(), "an idle session captures nothing");
+    CHECK(model.capturePath().isEmpty(), "an idle session has no log yet");
+    CHECK(model.captureTail(4096).isEmpty(), "there is nothing to read yet",
+        model.captureTail(4096).toStdString());
+
+    CHECK(model.save(), "the switch is saved with the configuration");
+    reload(model);
+    CHECK(model.captureEnabled() == !before, "the switch survives a reload");
+
+    model.setCapture(before);
+    CHECK(model.captureEnabled() == before, "the switch goes back");
+    model.save();
 }
 
 static void testOutsideChange()
@@ -382,6 +412,7 @@ int main(int argc, char** argv)
         testEditing();
         testPortSelection();
         testSessionTabs();
+        testCaptureSwitch();
         testOutsideChange();
         testBackendChoice();
         testLaunchGate();

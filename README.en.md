@@ -61,7 +61,9 @@ A change is written to disk at once: the search box has nowhere to put a Save bu
 
 Reached from its own "**Open standalone window**" row in the result list (Enter), or the launch row's menu (Ctrl+Enter).
 
-The same groups, plus what only a window can hold: a read-only port dropdown with a refresh, the device identity and when it was captured, a collapsed explanation of the control lines, a session block (phase / port state / PID / session id), the diagnostics text, and **Save + Launch + Stop**.
+The same groups, plus what only a window can hold: tabs, a Port & parameters card (port dropdown with a refresh, baud / data bits / parity / stop bits / flow), the device identity and when it was captured, the session card (phase / port state / PID / session id, and Session content — with capture on it reads the log tio writes itself, with Copy all and Save as text), the diagnostics text, and **Save + Launch + Stop + Restart + Clone**.
+
+"+" opens a session straight away and leaves the port empty until you pick one in Port & parameters; a port is exclusive only while a session runs, so picking the same one is allowed and Launch explains why it cannot go.
 
 The window draws from the host's `nativeLook` contract: all four styles (fluent / brand / tactile / liquid), the corners, the UI size and the transparency follow the host, and an appearance change repaints live.
 

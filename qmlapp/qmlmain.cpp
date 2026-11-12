@@ -79,6 +79,25 @@ void prepareGui()
     QQuickStyle::setStyle(u"Basic"_s);
 }
 
+// The window's notices are Chinese. Writing them with fprintf hands UTF-8
+// bytes to a console whose code page is 936, and the line turns into mojibake;
+// the console API takes UTF-16 and the console draws it in its own font. A
+// redirected stderr is not a console (GetConsoleMode fails) and keeps UTF-8.
+void writeStderr(const char* prefix, const QString& text)
+{
+    const HANDLE handle = ::GetStdHandle(STD_ERROR_HANDLE);
+    DWORD mode = 0;
+    if (handle != INVALID_HANDLE_VALUE && handle != nullptr
+            && ::GetConsoleMode(handle, &mode)) {
+        const QString line = QString::fromLatin1(prefix) + text + u'\n';
+        DWORD written = 0;
+        ::WriteConsoleW(handle, line.utf16(),
+            static_cast<DWORD>(line.size()), &written, nullptr);
+        return;
+    }
+    std::fprintf(stderr, "%s%s\n", prefix, qUtf8Printable(text));
+}
+
 void startGui()
 {
     qunsetenv("QT_QPA_PLATFORM");
@@ -97,7 +116,7 @@ bool openWindow(QString& error)
             g_engine->addImportPath(appDir + u"/qml"_s); // QtQuick and the rest: WinShun's
         tioplug::TioWindow* model = tioplug::windowModel();
         QObject::connect(model, &tioplug::TioWindow::notice, model,
-            [](const QString& text) { std::fprintf(stderr, "tio: %s\n", qUtf8Printable(text)); });
+            [](const QString& text) { writeStderr("tio: ", text); });
         g_engine->rootContext()->setContextProperty(u"tio"_s, model);
         // The host's look (nativeLook, the style, the corners, the size): the
         // window draws from it, so it looks like WinShun's own.
@@ -120,7 +139,7 @@ bool openWindow(QString& error)
         QObject::connect(g_engine, &QQmlApplicationEngine::warnings, g_engine,
             [](const QList<QQmlError>& warnings) {
                 for (const QQmlError& warning : warnings)
-                    std::fprintf(stderr, "tio: qml: %s\n", qUtf8Printable(warning.toString()));
+                    writeStderr("tio: qml: ", warning.toString());
             });
         g_engine->loadFromModule(u"Tio"_s, u"TioWindow"_s);
         if (g_engine->rootObjects().isEmpty()) {
@@ -164,7 +183,7 @@ extern "C" __declspec(dllexport) int winshunTioMain(const wchar_t* appDirName)
         QMetaObject::invokeMethod(qGuiApp, [&] { opened = openWindow(error); },
             Qt::BlockingQueuedConnection);
         if (!opened)
-            std::fprintf(stderr, "tio: %s\n", qUtf8Printable(error));
+            writeStderr("tio: ", error);
         return opened;
     });
 
@@ -253,7 +272,7 @@ extern "C" __declspec(dllexport) int winshunTioWindow(const wchar_t* appDirName)
 
     QString error;
     if (!openWindow(error)) {
-        std::fprintf(stderr, "tio: %s\n", qUtf8Printable(error));
+        writeStderr("tio: ", error);
         std::fflush(stderr);
         return 2;
     }

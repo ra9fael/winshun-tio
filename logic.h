@@ -352,24 +352,40 @@ struct Plan {
 // tio's own arguments. `--no-reconnect` is deliberate: the launcher owns
 // reconnect policy (TIO-010), and tio's automatic reconnect would silently
 // follow a reused COM number.
-inline std::vector<std::string> tioArguments(const Port& port, const Serial& serial)
+// If the session writes its content to a log file, this is that file: tio's own
+// --log-file target inside dataDir. Empty when the session records nothing.
+// The launcher never reads the port itself: it only reads this file back.
+inline std::vector<std::string> tioArguments(const Port& port, const Serial& serial,
+    const std::string& logFile = std::string())
 {
-    return {
+    std::vector<std::string> args = {
         "-n",
         "-b", std::to_string(serial.baudrate),
         "-d", std::to_string(serial.dataBits),
         "-p", parityName(serial.parity),
         "-s", std::to_string(serial.stopBits),
         "-f", flowName(serial.flow),
-        port.ok() ? port.device() : std::string(),
     };
+    if (!logFile.empty()) {
+        // tio owns the file: it strips escape sequences so what is read back is
+        // the text the terminal showed, and appending keeps a restart from
+        // erasing what the previous run captured.
+        args.push_back("-L");
+        args.push_back("--log-file");
+        args.push_back(logFile);
+        args.push_back("--log-append");
+        args.push_back("--log-strip");
+    }
+    args.push_back(port.ok() ? port.device() : std::string());
+    return args;
 }
 
 // `wtBin` and `tioExe` are absolute paths. `token` makes the tab title unique
 // per session, which is how a session is found again after wt.exe has handed
 // the process to the resident Windows Terminal.
 inline Plan planLaunch(Backend backend, const std::string& wtBin, const std::string& tioExe,
-                       const Port& port, const Serial& serial, const std::string& token)
+                       const Port& port, const Serial& serial, const std::string& token,
+                       const std::string& logFile = std::string())
 {
     Plan plan;
     plan.backend = backend;
@@ -387,7 +403,7 @@ inline Plan planLaunch(Backend backend, const std::string& wtBin, const std::str
     }
 
     plan.tio.push_back(tioExe);
-    for (const std::string& arg : tioArguments(port, serial))
+    for (const std::string& arg : tioArguments(port, serial, logFile))
         plan.tio.push_back(arg);
 
     if (backend == Backend::Conhost) {
@@ -472,6 +488,7 @@ struct Session {
     std::uint64_t created = 0;     // process creation time, guards PID reuse
     std::string token;             // per-session id, also in the wt title
     std::string device;
+    std::string logPath;           // tio's --log-file target, empty without capture
 
     bool active() const
     {
@@ -488,6 +505,11 @@ struct Form {
     std::wstring port;
     Serial serial;
     Backend backend = Backend::None;
+    // When set, this session is started with tio's own log to a file in
+    // dataDir, and the window may read those lines back. Off by default: the
+    // launcher records nothing the user did not ask for, and the screen is the
+    // only place a session's content normally exists.
+    bool capture = false;
 
     Port parsed() const;
 };
@@ -576,6 +598,7 @@ inline bool ownedProcess(const Session& s, std::uint32_t pid, std::uint64_t crea
 
 enum class Gate {
     Port,       // the name parses and maps
+    PortBusy,   // another tab's running session owns this port
     Parameters, // the serial values are in range
     Identity,   // the device snapshot still matches
     Package,    // every packaged file hashes as recorded
@@ -590,6 +613,7 @@ struct Readiness {
 
 struct Environment {
     Port port;
+    bool portBusyByOther = false;
     Serial serial;
     bool identityKnown = true;
     bool packageValid = true;
@@ -602,6 +626,8 @@ inline Readiness check(const Environment& env)
     Readiness readiness;
     if (!env.port.ok())
         readiness.blocking.push_back(Gate::Port);
+    else if (env.portBusyByOther)
+        readiness.blocking.push_back(Gate::PortBusy);
     if (validate(env.serial) != ParamError::None)
         readiness.blocking.push_back(Gate::Parameters);
     if (!env.identityKnown)
@@ -619,6 +645,7 @@ inline const char* gateId(Gate gate)
 {
     switch (gate) {
     case Gate::Port: return "port";
+    case Gate::PortBusy: return "portBusy";
     case Gate::Parameters: return "parameters";
     case Gate::Identity: return "identity";
     case Gate::Package: return "package";

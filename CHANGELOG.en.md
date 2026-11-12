@@ -4,7 +4,21 @@
 
 ### Standalone window overhaul
 
-- **Multi-session (session-oriented)**: the window is now tabbed — each tab binds one port to at most one process, so COM8 and COM9 can run at once. The tab bar shows the COM number, the Device-Manager name and a state dot; "＋ New session" only offers ports nobody holds (**one port, one session, ever**); tabs close (stop first while running) and clone (parameters copied, refused while the port is held); Restart = stop, then launch again with the same form. Launch/Stop act on the focused tab only — other tabs' sessions are untouched; host shutdown still stops everything.
+- **Multi-session (session-oriented)**: the window is now tabbed — each tab carries at most one process, so COM8 and COM9 can run at once. The tab bar shows the COM number, the Device-Manager name and a state dot. **"+" opens a session straight away and a port is not a precondition**: the new tab says "no port" and the port is chosen in the Port & parameters card; a port is exclusive only while a session runs, so another tab may pick the same one (the dropdown still marks it "this port is already running in another session") and Launch refuses with "port busy". Tabs close (stop first while running) and clone (parameters copied, no port); Restart = stop, then launch again with the same form. Launch/Stop act on the focused tab only — other tabs' sessions are untouched; host shutdown still stops everything. Every tab is 52px tall.
+
+### Session content (capture)
+
+- **Capture is a launch argument, not a runtime switch**: tio 3.9 takes `-L --log-file <file> --log-append --log-strip` only at launch and cannot open a log while it runs. "Start capture" is therefore a per-session choice made before launch and saved with the default configuration; flipping it during a run takes effect on the next launch, and the window says so.
+- **It reads only its own file**: the log goes to `dataDir\sessions\<token>.log`, and the window reads that file (last 32KB, refreshed every second while capturing). It never opens the port, needs no serial-read permission and uploads nothing; closing the tab deletes the log.
+- **Session content lives in the session card**: a dashed "Session content" heading — switch, state (capturing / on · records after launch / not capturing), a monospaced view, Copy all, and Save as text (the Win32 save dialog: the host only guarantees `QtQuick.Controls.Basic` and ships no Qt Quick Dialogs).
+
+### Window details
+
+- **Tabs are all one height**: 52px — a tab that names its port draws a second line and a port-less tab only one, and the two used to differ.
+- **Console text is no longer mojibake**: the window's notices were written to stderr as UTF-8 with `fprintf` and a CP936 console showed "鎏晳幙…"; when stderr is a console it now goes through `WriteConsoleW` as UTF-16, and a redirected stderr still gets UTF-8.
+
+### Other window changes
+
 - **The search box follows**: the main row still shows the saved configuration (it turns into "Stop" while a session runs that port); the window's other sessions are listed row by row under "Sessions (Enter stops)", and Enter stops exactly that row — no more stop-everything.
 - **Package integrity is verifiable**: the card gains "Third-party notes" and "File manifest" buttons that open the **in-package** `THIRD_PARTY.md` and `manifest/files.json` — per-file sources, licences and hashes; what opens is the copy the launcher verified, not a web page.
 
