@@ -4,6 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>tio 串口终端 — 多会话交互稿（浏览器式页签）</title>
+<!--
+  v6 (approved 2026-11-12): ＋ always creates a session with NO port — the port
+  card reads "未指定 / unspecified" until one is chosen there; launch requires a
+  port and refuses one a running session holds; capture lives inside the
+  session card behind an explicit permission bar; no all-sessions panel.
+-->
 <style>
 /* Design tokens mirror WinShun's nativeLook contract (DesignTokens.qml /
    ThemeBridge.cpp fallbacks) so the QML build can lift them verbatim. */
@@ -77,23 +83,6 @@ body{margin:0;padding:28px 16px;background:#6b6b76;font-family:var(--font);
 .tabbtn:hover{background:var(--hover);color:var(--text)}
 .tabbtn:focus-visible,.stab:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 
-/* the + picker: a dropdown anchored under the tab strip, NOT a card at the bottom */
-.pluspanel{position:absolute;top:84px;right:10px;z-index:12;min-width:320px;
-  background:var(--card);border:1px solid var(--border);border-radius:var(--r-ctl);
-  padding:6px;display:none;box-shadow:var(--shadow)}
-.pluspanel.open{display:block}
-.pluspanel .title{font-size:10.5px;color:var(--faint);letter-spacing:.04em;
-  text-transform:uppercase;padding:4px 8px 6px}
-.pluspanel .opt{padding:7px 10px;border-radius:var(--r-small);cursor:pointer}
-.pluspanel .opt:hover{background:var(--hover)}
-.pluspanel .opt.used{opacity:.55;cursor:default}
-.pluspanel .opt.used:hover{background:transparent}
-.pluspanel .opt .held{color:var(--warn)}
-.pluspanel .opt .n{display:block;font-size:12.5px}
-.pluspanel .opt .s{display:block;font-size:10.5px;color:var(--subtext);font-family:var(--mono);
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.pluspanel .empty{padding:8px 10px;font-size:11.5px;color:var(--subtext)}
-
 /* ---- the per-session pane: the whole body below the strip is one tab's ---- */
 .pane{flex:1;min-height:0;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:12px}
 .pane::-webkit-scrollbar{width:10px}
@@ -123,6 +112,12 @@ button.primary{background:var(--accent);border-color:var(--accent);color:var(--a
 button.stop{color:var(--danger);border-color:var(--danger)}
 button:disabled{opacity:.45;cursor:not-allowed}
 .btnrow{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+/* a labelled section inside one card (capture lives inside the session card) */
+.subhead{margin-top:2px;padding-top:9px;border-top:1px dashed var(--border);
+  font-size:10.5px;color:var(--faint);letter-spacing:.05em;text-transform:uppercase;
+  display:flex;align-items:center;gap:7px}
+.subhead .dot{width:7px;height:7px;border-radius:50%;display:none;flex:none}
+.subhead.capping .dot{display:inline-block;background:var(--danger)}
 
 /* port selector: full width, refresh beside it (not cramped) */
 .combo{position:relative;flex:1}
@@ -204,29 +199,11 @@ a.src:hover{border-bottom-style:solid}
   color:var(--subtext);white-space:nowrap;justify-self:end}
 .pkgrow .tag.nb{color:var(--warn)}
 
-/* session management: one row per session, actions on that session's own content */
-.mgmt{display:flex;flex-direction:column;gap:5px}
-.mhead,.mrow{display:grid;grid-template-columns:minmax(170px,1.4fr) 78px 92px 104px 188px;
-  gap:10px;align-items:center;padding:6px 8px;font-size:11.5px}
-.mhead{color:var(--faint);font-size:10.5px;letter-spacing:.03em;padding-bottom:0}
-.mrow{border:1px solid var(--border);border-radius:var(--r-small)}
-.mrow.cur{background:var(--sunken)}
-.mrow .who{display:flex;flex-direction:column;gap:2px;min-width:0}
-.mrow .who .top{display:flex;align-items:center;gap:6px}
-.mrow .who .com{font-size:12.5px;font-weight:600;color:var(--text)}
-.mrow .who .curtag{font-size:9.5px;color:var(--accent);border:1px solid currentColor;
-  border-radius:999px;padding:0 5px;white-space:nowrap}
-.mrow .who .nm{font-size:10.5px;color:var(--subtext);white-space:nowrap;overflow:hidden;
-  text-overflow:ellipsis}
-.mrow .dot{width:7px;height:7px;border-radius:50%;flex:none;display:inline-block}
-.mrow .st{font-size:11px;color:var(--subtext)}
-.mrow .cnt{font-family:var(--mono);font-size:10.5px;color:var(--subtext);white-space:nowrap}
-.mrow .acts{display:flex;gap:5px;justify-content:flex-end;flex-wrap:wrap}
-.mrow .acts button{padding:3px 8px;font-size:11px}
-.tagcap{font-size:10px;border-radius:999px;padding:0 6px;border:1px solid var(--border);
-  color:var(--subtext);white-space:nowrap}
-.tagcap.on{color:var(--danger);border-color:var(--danger)}
-.mgmt .hint{font-size:10.5px;color:var(--subtext)}
+/* all-sessions panel styles removed in v5: cross-session ops live in the
+   capture area of each session; the + creates a session without a port check. */
+/* v6: a new session starts with NO port — the port card reads "unspecified"
+   until one is chosen there, and launch requires one. */
+
 
 /* confirm dialog inside the window (never a browser confirm()) */
 .mask{position:absolute;inset:0;background:rgba(0,0,0,.38);display:none;
@@ -268,24 +245,19 @@ a.src:hover{border-bottom-style:solid}
     <span class="btns"><span>—</span><span>▢</span><span>✕</span></span>
   </div>
 
-  <!-- ---- the session tab strip: tabs AND the + live here ------------------- -->
+  <!-- ---- the session tab strip: tabs to switch, ＋ always creates ---------- -->
   <div class="tabstrip">
     <div class="tabs" id="tabs" role="tablist"></div>
-    <button class="tabbtn" id="tab-plus" aria-haspopup="true" aria-expanded="false">＋</button>
-  </div>
-  <div class="pluspanel" id="pluspanel">
-    <div class="title" id="plus-title"></div>
-    <div id="plus-opts"></div>
+    <button class="tabbtn" id="tab-plus" title="新建会话">＋</button>
   </div>
 
   <!-- ---- everything below is ONE tab's pane; switching tabs swaps it ------- -->
   <div class="pane" id="pane">
 
-    <!-- 会话：操作在标题行右侧，状态紧随其下 -->
+    <!-- 会话：当前页签的控制、读数与捕获，都在一张卡里 -->
     <section class="card">
       <div class="head">
         <h2 data-i18n="groupSession">会话</h2>
-        <span class="note" id="sess-note"></span>
         <span class="chip" id="sess-chip"></span>
         <span class="spacer"></span>
         <button class="primary" id="btn-launch" data-i18n="launch">启动</button>
@@ -293,32 +265,29 @@ a.src:hover{border-bottom-style:solid}
         <button id="btn-restart" data-i18n="restart">重启</button>
         <button id="btn-clone" data-i18n="clone">克隆</button>
       </div>
-      <div class="row"><span class="lbl" data-i18n="phase">阶段</span><span class="hint" id="sess-phase"></span></div>
       <div class="row"><span class="lbl" data-i18n="portState">端口状态</span><span class="hint warn-text" id="sess-port"></span></div>
       <div class="row"><span class="lbl" data-i18n="pid">PID</span><span class="hint" id="sess-pid"></span></div>
       <div class="row"><span class="lbl"></span>
         <span class="hint" data-i18n="sessCaveat">“已启动”不等于“端口已打开”：端口状态只有在上游给出可验证信号时才会变化。</span></div>
-    </section>
 
-    <!-- 会话管理：全部会话一屏；每行只操作该会话自己的内容 -->
-    <section class="card">
-      <div class="head">
-        <h2 data-i18n="groupManage">会话管理</h2>
-        <span class="note" id="mgmt-note"></span>
-        <span class="spacer"></span>
-        <span class="chip" id="mgmt-chip"></span>
+      <div class="subhead" id="cap-subhead"><span class="dot"></span>
+        <span data-i18n="groupContent">会话内容</span></div>
+      <div class="permbar" id="permbar" hidden>
+        <span class="t" data-i18n="permText">捕获不碰串口：启动时让 tio 用它自己的 --log-file 把收发写进本机 dataDir 的日志，插件只读那个文件。只对这一个会话生效，可随时关闭；删除会话即删除日志。不拦截端口、不上传。</span>
+        <button class="primary" id="perm-yes" data-i18n="permAllow">允许本会话捕获</button>
+        <button id="perm-no" data-i18n="permDeny">暂不</button>
       </div>
-      <div class="mgmt">
-        <div class="mhead">
-          <span data-i18n="colSession">会话</span>
-          <span data-i18n="colState">状态</span>
-          <span data-i18n="colCapture">捕获</span>
-          <span data-i18n="colContent">内容</span>
-          <span style="text-align:right" data-i18n="colActions">操作</span>
-        </div>
-        <div id="mgmt-rows"></div>
+      <div class="row"><span class="lbl" data-i18n="capture">捕获</span>
+        <button id="btn-capture" data-i18n="capStart">开始捕获</button>
+        <span class="hint" id="cap-stats"></span></div>
+      <div class="term" id="term"></div>
+      <div class="termbar">
+        <span class="stats" data-i18n="capPrivacy">捕获内容只留在本机内存与导出文件；上传、遥测均不存在。</span>
+        <button id="btn-copy" data-i18n="copyAll">复制全部</button>
+        <button id="btn-save" data-i18n="saveText">另存为文本</button>
+        <button id="btn-script" data-i18n="saveScript">导出重放脚本</button>
+        <button id="btn-clear" data-i18n="clear">清屏</button>
       </div>
-      <span class="hint" data-i18n="manageHint">查看会切到那个页签并滚到会话内容；复制与保存只取那个会话自己的捕获，不混入别的会话。</span>
     </section>
 
     <!-- 端口与参数 -->
@@ -353,29 +322,6 @@ a.src:hover{border-bottom-style:solid}
         <span class="hint" data-i18n="flowHint">hard 时 RTS 由流控管理，不承诺固定电平</span></div>
     </section>
 
-    <!-- 会话内容：当前页签的捕获，权限边界写在卡里 -->
-    <section class="card" id="content-card">
-      <div class="head"><h2 data-i18n="groupContent">会话内容</h2>
-        <span class="note" id="cap-note"></span>
-        <span class="chip" id="cap-chip"></span></div>
-      <div class="permbar" id="permbar" hidden>
-        <span class="t" data-i18n="permText">捕获会读取串口收发的全部字节，并保留在本机。这打破了插件「不读取串口内容」的默认边界：需要新的 serial:read 权限，且只对这一个会话生效，可随时关闭。</span>
-        <button class="primary" id="perm-yes" data-i18n="permAllow">允许本会话捕获</button>
-        <button id="perm-no" data-i18n="permDeny">暂不</button>
-      </div>
-      <div class="row"><span class="lbl" data-i18n="capture">捕获</span>
-        <button id="btn-capture" data-i18n="capStart">开始捕获</button>
-        <span class="hint" id="cap-stats"></span></div>
-      <div class="term" id="term"></div>
-      <div class="termbar">
-        <span class="stats" data-i18n="capPrivacy">捕获内容只留在本机内存与导出文件；上传、遥测均不存在。</span>
-        <button id="btn-copy" data-i18n="copyAll">复制全部</button>
-        <button id="btn-save" data-i18n="saveText">另存为文本</button>
-        <button id="btn-script" data-i18n="saveScript">导出重放脚本</button>
-        <button id="btn-clear" data-i18n="clear">清屏</button>
-      </div>
-    </section>
-
     <!-- 设备详情 -->
     <section class="card">
       <div class="head fold" id="details-head" role="button" tabindex="0" aria-expanded="false">
@@ -384,7 +330,7 @@ a.src:hover{border-bottom-style:solid}
         <span class="note"><span data-i18n="captured">采集于</span> <span id="id-time"></span>
           <span class="busy" id="id-busy" hidden data-i18n="collecting">采集中…</span></span>
       </div>
-      <span class="hint warn-text" id="id-missing" hidden data-i18n="idMissing">身份未知：只能确认当前端口</span>
+      <span class="hint warn-text" id="id-missing" hidden data-i18n="idNoPort">未选择串口：没有可确认的身份</span>
       <div class="details" id="details">
         <div class="dline"><span class="k" data-i18n="kMfr">厂商</span><span class="v plain" id="d-mfr"></span></div>
         <div class="dline"><span class="k" data-i18n="kChip">产品</span><span class="v plain" id="d-chip"></span></div>
@@ -472,7 +418,7 @@ const PORTS = [
 ];
 
 const I18N = {
-  zh:{ app:"tio 串口终端", groupSession:"会话", phase:"阶段", portState:"端口状态", pid:"PID",
+  zh:{ app:"tio 串口终端", groupSession:"会话", portState:"端口状态", pid:"PID",
     launch:"启动", stop:"停止", restart:"重启", clone:"克隆",
     sessCaveat:"“已启动”不等于“端口已打开”：端口状态只有在上游给出可验证信号时才会变化。",
     groupPort:"端口与参数", locked:"会话运行中 · 锁定", refresh:"刷新",
@@ -510,21 +456,21 @@ const I18N = {
     removed:"这个端口不在了", swapped:"同一 COM 号上是另一台设备：身份已重新采集",
     closeDlgTitle:"会话还在运行", closeDlgText:"{name} 的进程还在跑。关闭页签会先停止它，再丢弃这个页签。",
     closeDlgYes:"停止并关闭", closeDlgNo:"取消",
-    inUse:"这个端口已经在别的会话里", plusTitle:"选择未被占用的串口",
-    plusEmpty:"没有未被占用的串口：每个会话占用一个端口",
-    groupManage:"会话管理", colSession:"会话", colState:"状态", colCapture:"捕获",
-    colContent:"内容", colActions:"操作", currentTab:"当前",
-    actView:"查看", actCopy:"复制", actSave:"保存", actClose:"关闭", heldShort:"已占用",
-    linesShort:"行", created:"已新建会话",
+    inUse:"这个端口已经在别的会话里",
+    newSession:"新建会话",
+    portHeld:"该串口正被另一个会话使用：先停止它，或换一个串口",
+    noPort:"未指定",
+    noPortLong:"先在端口与参数里选择一个串口",
+    idNoPort:"未选择串口：没有可确认的身份",
+    actClose:"关闭", cloneHint:"把当前参数复制成一个新会话（串口可再改）",
+    linesShort:"行",
     noContent:"还没有内容：会话运行后开始捕获",
-    manageHint:"查看会切到那个页签并滚到会话内容；复制与保存只取那个会话自己的捕获，不混入别的会话。",
-    mgmtNote:"全部 {n} 个会话 · 运行中 {run} · 捕获中 {cap}",
     demoTag:"演示控制 · 不属于窗口", demoTheme:"主题", demoLang:"WinShun 语言（窗口跟随宿主）",
     demoState:"演示状态", themeLight:"浅色", themeDark:"深色",
     stateKeep:"跟随页签", stateIdle:"全部空闲", stateCapturing:"当前会话捕获中",
     stateRemoved:"当前端口已拔出",
     diagBody:"ra9fael.tio 启动器\n包版本    : 0.1.0\n完整性    : 有效\n后端      : wt 1.25.2733.0 · conhost\n捕获      : 关（不开启会话捕获就不读取任何串口内容）\n隐私      : 捕获的字节只留在本机；不上传、不遥测" },
-  en:{ app:"tio serial terminal", groupSession:"Session", phase:"Phase", portState:"Port state", pid:"PID",
+  en:{ app:"tio serial terminal", groupSession:"Session", portState:"Port state", pid:"PID",
     launch:"Launch", stop:"Stop", restart:"Restart", clone:"Clone",
     sessCaveat:"\"Started\" is not \"port open\": the port state changes only when the upstream gives a verifiable signal.",
     groupPort:"Port & parameters", locked:"session running · locked", refresh:"Refresh",
@@ -562,15 +508,15 @@ const I18N = {
     removed:"this port is gone", swapped:"another device now sits on this COM number: the identity was recaptured",
     closeDlgTitle:"The session is still running", closeDlgText:"The process behind {name} is still running. Closing the tab stops it first, then drops the tab.",
     closeDlgYes:"Stop and close", closeDlgNo:"Cancel",
-    inUse:"that port is already held by another session", plusTitle:"Pick an unused port",
-    plusEmpty:"no unused port: every session holds one",
-    groupManage:"Session management", colSession:"Session", colState:"State", colCapture:"Capture",
-    colContent:"Content", colActions:"Actions", currentTab:"current",
-    actView:"View", actCopy:"Copy", actSave:"Save", actClose:"Close", heldShort:"in use",
-    linesShort:"lines", created:"New session",
+    inUse:"that port is already held by another session",
+    newSession:"New session",
+    portHeld:"that port is in use by another session: stop it first or pick another",
+    noPort:"unspecified",
+    noPortLong:"pick a port in Port & parameters first",
+    idNoPort:"no port chosen: no identity to confirm",
+    actClose:"Close", cloneHint:"copy the current parameters into a new session (the port can be changed)",
+    linesShort:"lines",
     noContent:"no content yet: capture begins once the session runs",
-    manageHint:"View switches to that tab and scrolls to its content; Copy and Save take only that session's capture.",
-    mgmtNote:"{n} sessions · {run} running · {cap} capturing",
     demoTag:"demo controls · not part of the window", demoTheme:"Theme",
     demoLang:"WinShun language (the window follows the host)",
     demoState:"Demo state", themeLight:"Light", themeDark:"Dark",
@@ -610,16 +556,16 @@ const SESSIONS = [
 const active = () => SESSIONS.find(s => s.id === activeId);
 const portOf = s => PORTS.find(p => p.com === s.com);
 
-/* ---- the tab strip: tabs AND the + dropdown live here ------------------ */
+/* ---- the tab strip: tabs to switch; ＋ always creates a session ---------- */
 function renderTabs(){
   $("tabs").innerHTML = SESSIONS.map(s => {
     const p = portOf(s);
     const cap = s.capture === "on" ? " cap" : "";
     return `<button class="stab ${s.id===activeId?"active":""}" role="tab" tabindex="0"
         data-id="${s.id}" aria-selected="${s.id===activeId}"
-        title="${esc(p ? p.name : "")}">
+        title="${esc((p ? p.name : t("noPort")) + (s.lines.length ? ` · ${s.lines.length} ${t("linesShort")}` : ""))}">
       <span class="dot ${s.state}${cap}"></span>
-      <span class="com">COM${s.com}</span>
+      <span class="com">${s.com ? "COM" + s.com : esc(t("noPort"))}</span>
       <span class="nm">${esc(p ? p.name : "")}</span>
       <span class="close" data-close="${s.id}" title="${esc(t("actClose"))}">✕</span>
     </button>`;
@@ -631,44 +577,20 @@ function renderTabs(){
   $("tabs").querySelectorAll("[data-close]").forEach(b => {
     b.onclick = e => { e.stopPropagation(); closeSession(+b.dataset.close); };
   });
-  $("plus-title").textContent = t("plusTitle");
-  $("tab-plus").onclick = e => {
-    e.stopPropagation();
-    const open = $("pluspanel").classList.toggle("open");
-    $("tab-plus").setAttribute("aria-expanded", String(open));
-    if (open) renderPlusOptions();
-  };
+  // ＋ always creates a session. No port check here: the port is whatever the
+  // port card says, and launch refuses a port another session is using.
+  $("tab-plus").title = t("newSession");
+  $("tab-plus").onclick = () => createSession();
   applyLangToStatic();
 }
 
-function renderPlusOptions(){
-  const free = PORTS.filter(p => !SESSIONS.some(s => s.com === p.com));
-  const hint = free.length ? "" : `<div class="empty">${esc(t("plusEmpty"))}</div>`;
-  $("plus-opts").innerHTML = hint + PORTS.map(p => {
-    const held = SESSIONS.find(s => s.com === p.com);
-    return `<div class="opt${held ? " used" : ""}" tabindex="${held ? "-1" : "0"}"
-        role="option"${held ? "" : ` data-com="${p.com}"`}>
-      <span class="n">${esc(p.name)}${held ? ` · <span class="held">${esc(t("heldShort"))}</span>` : ""}</span>
-      <span class="s">${esc(p.device)} · ${esc(p.identity)}</span></div>`;
-  }).join("");
-  $("plus-opts").querySelectorAll("[data-com]").forEach(el => {
-    el.onclick = () => { createSession(+el.dataset.com); $("pluspanel").classList.remove("open");
-      $("tab-plus").setAttribute("aria-expanded", "false"); };
-    el.onkeydown = e => { if (e.key === "Enter"){ e.preventDefault();
-      createSession(+el.dataset.com); $("pluspanel").classList.remove("open");
-      $("tab-plus").setAttribute("aria-expanded", "false"); } };
-  });
-}
-document.addEventListener("click", e => {
-  if (!e.target.closest("#pluspanel") && !e.target.closest("#tab-plus"))
-    $("pluspanel").classList.remove("open");
-});
-
-function createSession(com){
-  const s = { id:nextId++, com, state:"idle", capture:"off", permitted:false, pid:0,
-    params:{ baud:115200, dataBits:"8", parity:"none", stopBits:"1", flow:"none" },
-    started:null, lines:[{ cls:"sys", text:`[COM${com}]` }] };
-  SESSIONS.push(s); switchTo(s.id); toast(t("created") + " COM" + com);
+function createSession(){
+  // A new tab starts with no port at all: the port card reads "unspecified"
+  // until one is chosen there, and launch needs one.
+  const s = { id:nextId++, com:0, state:"idle", capture:"off", permitted:false,
+    pid:0, params:{ baud:115200, dataBits:"8", parity:"none", stopBits:"1", flow:"none" },
+    started:null, lines:[] };
+  SESSIONS.push(s); switchTo(s.id);
 }
 
 /* ---- session lifecycle (simulated) ---- */
@@ -692,7 +614,7 @@ function removeSession(s){
   if (s.capture === "on") s.capture = "off";
   const i = SESSIONS.indexOf(s);
   if (i >= 0) SESSIONS.splice(i, 1);
-  if (!SESSIONS.length){ SESSIONS.push({ id:nextId++, com:PORTS[0].com, state:"idle",
+  if (!SESSIONS.length){ SESSIONS.push({ id:nextId++, com:0, state:"idle",
     capture:"off", permitted:false, pid:0,
     params:{ baud:115200, dataBits:"8", parity:"none", stopBits:"1", flow:"none" },
     started:null, lines:[] }); }
@@ -708,55 +630,13 @@ $("close-yes").onclick = () => {
 };
 $("close-no").onclick = () => { pendingClose = null; $("close-mask").classList.remove("show"); };
 
-/* ---- session management: every session, its own content ---- */
-function countText(s){
-  const bytes = s.lines.reduce((n, l) => n + l.text.length, 0);
-  return `${s.lines.length} ${t("linesShort")} · ${bytes} B`;
-}
-function renderManage(){
-  const run = SESSIONS.filter(s => s.state === "running" || s.state === "starting").length;
-  const cap = SESSIONS.filter(s => s.capture === "on").length;
-  $("mgmt-note").textContent = t("mgmtNote").replace("{n}", SESSIONS.length)
-    .replace("{run}", run).replace("{cap}", cap);
-  $("mgmt-chip").textContent = cap ? t("capOn") : t("capOff");
-  $("mgmt-chip").style.color = cap ? "var(--danger)" : "";
-  $("mgmt-rows").innerHTML = SESSIONS.map(s => {
-    const p = portOf(s), on = s.capture === "on", empty = !s.lines.length;
-    return `<div class="mrow${s.id === activeId ? " cur" : ""}" data-row="${s.id}">
-      <span class="who">
-        <span class="top"><span class="dot ${s.state}${on ? " cap" : ""}"></span>
-          <span class="com">COM${s.com}</span>
-          ${s.id === activeId ? `<span class="curtag">${esc(t("currentTab"))}</span>` : ""}</span>
-        <span class="nm" title="${esc(p ? p.name : "")}">${esc(p ? p.name : "")}</span>
-      </span>
-      <span class="st">${esc(t(stKey(s)))}</span>
-      <span><span class="tagcap${on ? " on" : ""}">${esc(on ? t("capOn") : t("capOff"))}</span></span>
-      <span class="cnt">${empty ? "—" : esc(countText(s))}</span>
-      <span class="acts">
-        <button data-act="view">${esc(t("actView"))}</button>
-        <button data-act="copy"${empty ? " disabled" : ""}>${esc(t("actCopy"))}</button>
-        <button data-act="save"${empty ? " disabled" : ""}>${esc(t("actSave"))}</button>
-        <button data-act="close">${esc(t("actClose"))}</button>
-      </span>
-    </div>`;
-  }).join("");
-  $("mgmt-rows").querySelectorAll("[data-act]").forEach(b => {
-    b.onclick = () => {
-      const row = +b.closest("[data-row]").dataset.row;
-      const s = SESSIONS.find(x => x.id === row);
-      if (!s) return;
-      const act = b.dataset.act;
-      if (act === "view"){
-        switchTo(s.id);
-        $("content-card").scrollIntoView({ behavior:"smooth", block:"start" });
-      } else if (act === "copy") copySession(s);
-      else if (act === "save") saveSession(s);
-      else if (act === "close") closeSession(s.id);
-    };
-  });
-}
 $("btn-launch").onclick = () => {
   const s = active(); if (s.state !== "idle") return;
+  if (!s.com){ toast(t("noPortLong")); return; }
+  // One port, one running session: an idle tab sharing the port is fine, a
+  // running one is not. The port itself is chosen in the port card.
+  if (SESSIONS.some(x => x.id !== s.id && x.com === s.com
+      && (x.state === "running" || x.state === "starting"))){ toast(t("portHeld")); return; }
   s.state = "starting"; renderAll();
   setTimeout(() => { s.state = "running"; s.pid = 10000 + Math.floor(Math.random()*9000);
     s.started = clock();
@@ -776,7 +656,8 @@ $("btn-restart").onclick = () => {
 };
 $("btn-clone").onclick = () => {
   const s = active();
-  if (SESSIONS.some(x => x.com === s.com && x.id !== s.id)) { toast(t("inUse")); return; }
+  // Clone copies the whole configuration into a new tab; the port rides along
+  // and can be changed in the port card before launching.
   SESSIONS.push({ id:nextId++, com:s.com, state:"idle", capture:"off", permitted:false,
     pid:0, params:{...s.params}, started:null, lines:[] });
   switchTo(SESSIONS.at(-1).id);
@@ -784,20 +665,22 @@ $("btn-clone").onclick = () => {
 
 /* ---- port selector (per session) ---- */
 function renderCombo(){
-  const s = active();
+  const s = active(), cur = portOf(s);
   $("combo-list").innerHTML = PORTS.map(p => {
     const used = SESSIONS.some(x => x.com === p.com && x.id !== s.id);
     return `<div role="option" tabindex="0" data-com="${p.com}" class="${p.com===s.com?"cur":""}">
       <span class="n">${esc(p.name)}${used?` <b class="warn-text">· ${esc(t("inUse"))}</b>`:""}</span>
       <span class="s">${esc(p.device)} · ${esc(p.identity)}</span></div>`;
   }).join("");
-  $("combo-sel").textContent = portOf(s).name;
-  $("device-hint").textContent = `${portOf(s).device} · ${portOf(s).identity}`;
+  $("combo-sel").textContent = cur ? cur.name : t("noPort");
+  $("device-hint").textContent = cur
+    ? `${cur.device} · ${cur.identity}` : t("noPortLong");
 }
 function pickPort(com){
   const s = active();
   if (s.state !== "idle"){ toast(t("locked")); return; }
-  if (SESSIONS.some(x => x.com === com && x.id !== s.id)){ toast(t("inUse")); return; }
+  // Any port may be picked, even one another idle tab also points at: launch
+  // is where one-port-one-run is enforced.
   s.com = com; renderAll(); renderIdentity(true);   // automatic recapture
 }
 $("combo-btn").onclick = () => $("combo").classList.toggle("open");
@@ -811,10 +694,19 @@ $("combo-list").onclick = e => {
 };
 $("btn-refresh").onclick = () => renderIdentity(true);
 
-/* ---- identity: automatic, per active session ---- */
+/* ---- identity: automatic, per active session; none while no port is chosen ---- */
 function renderIdentity(recapture){
   const s = active(), p = portOf(s);
   const busy = $("id-busy"), missing = $("id-missing");
+  if (!p){
+    clearTimeout(collectTimer);
+    busy.hidden = true; missing.hidden = false;
+    missing.textContent = t("idNoPort");
+    $("id-time").textContent = "—";
+    clearIdentity();
+    return;
+  }
+  missing.textContent = p.problem || s.com === 0 ? missing.textContent : t("idMissing");
   if (recapture){
     busy.hidden = false; missing.hidden = true;
     $("id-time").textContent = "…";
@@ -823,6 +715,11 @@ function renderIdentity(recapture){
     return;
   }
   busy.hidden = true; missing.hidden = true; fill(p);
+}
+function clearIdentity(){
+  ["d-mfr","d-chip","d-vidpid","d-serial","d-bus","d-driver","d-location",
+   "d-instance","d-status"].forEach(id => $(id).textContent = "");
+  $("line-serial").style.display = "";
 }
 function fill(p){
   $("id-time").textContent = clock();
@@ -835,19 +732,19 @@ function fill(p){
   $("d-status").textContent = p.problem ? t("kStatus") + ": " + p.problem : t("okState");
 }
 
-/* ---- capture: the new capability, with an explicit permission gate ---- */
+/* ---- capture: lives inside the session card, behind an explicit gate ---- */
 function renderCapture(){
-  const s = active(), p = portOf(s);
+  const s = active();
   const on = s.capture === "on";
-  $("cap-chip").textContent = on ? t("capOn") : t("capOff");
-  $("cap-chip").style.color = on ? "var(--danger)" : "";
+  $("cap-subhead").classList.toggle("capping", on);
   $("btn-capture").textContent = on ? t("capStop") : t("capStart");
   $("btn-capture").disabled = s.state !== "running" && !on;
-  $("cap-note").textContent = p.name;
   const bytes = s.lines.reduce((n, l) => n + l.text.length, 0);
   $("cap-stats").textContent = on
     ? `${s.lines.length} ${t("linesShort")} · ${bytes} B · ${s.started ?? ""}` : "";
-  $("permbar").hidden = s.permitted || on;
+  // The permission bar is opened by the capture button, never shown just
+  // because a tab happens to be unpermitted.
+  $("permbar").hidden = true;
   $("btn-copy").disabled = !s.lines.length;
   $("btn-save").disabled = !s.lines.length;
   $("btn-script").disabled = !s.lines.some(l => l.cls === "in");
@@ -856,8 +753,9 @@ function renderCapture(){
 function renderTerm(s){
   const body = s.lines.map(l =>
     `<span class="${l.cls}">${esc(l.text)}\n</span>`).join("");
-  $("term").innerHTML = body
-    || `<span class="sys">${esc(s.state === "running" ? t("noContent") : t("capNeedRun"))}</span>`;
+  const empty = s.state === "running" ? t("noContent")
+    : s.com ? t("capNeedRun") : t("noPortLong");
+  $("term").innerHTML = body || `<span class="sys">${esc(empty)}</span>`;
   $("term").scrollTop = $("term").scrollHeight;
 }
 $("btn-capture").onclick = () => {
@@ -904,8 +802,9 @@ $("btn-save").onclick = () => saveSession(active());
 $("btn-script").onclick = () => {
   const s = active();
   const ins = s.lines.filter(l => l.cls === "in").map(l => l.text.replace(/^>\s?/, ""));
+  const dev = portOf(s) ? portOf(s).device : t("noPort");
   const body = ["# replay script generated by ra9fael.tio — review before running!",
-    `# session COM${s.com} · ${portOf(s).device}`, ...ins.map(l => `echo ${JSON.stringify(l)}`)].join("\n");
+    `# session COM${s.com} · ${dev}`, ...ins.map(l => `echo ${JSON.stringify(l)}`)].join("\n");
   download(`tio-replay-com${s.com}.sh`, body + "\n"); toast(t("saved"));
 };
 $("btn-clear").onclick = () => { active().lines = []; renderCapture(); };
@@ -993,18 +892,20 @@ $("pkg-head").onkeydown = e => {
     setPkgOpen(!$("pkg-details").classList.contains("open")); }
 };
 
-/* ---- session card: state + the buttons live in its header ---- */
+/* ---- session card: the focused tab's control + readings only ---- */
 function renderSessionCard(){
-  const s = active(), p = portOf(s);
-  $("sess-note").textContent = p.name;
-  $("sess-chip").textContent = s.pid ? "PID " + s.pid : "COM" + s.com;
-  $("sess-phase").textContent = t(stKey(s));
-  $("sess-port").textContent = t("psUnknown");
+  const s = active();
+  $("sess-chip").textContent = t(stKey(s));
+  $("sess-chip").style.color = s.state === "running" ? "var(--ok)"
+    : s.state === "starting" || s.state === "stopping" ? "var(--warn)" : "";
+  $("sess-port").textContent = s.com ? t("psUnknown") : "—";
   $("sess-pid").textContent = s.pid || "—";
   const running = s.state !== "idle";
   $("btn-launch").disabled = s.state !== "idle";
   $("btn-stop").disabled = !running;
   $("btn-restart").disabled = s.state !== "running";
+  // Clone = copy this tab's configuration; the port can be changed afterwards.
+  $("btn-clone").title = t("cloneHint");
   const locked = running;
   $("port-lock").hidden = !locked;
   $("port-card").classList.toggle("locked", locked);
@@ -1044,12 +945,12 @@ function renderSegments(){
 function renderFooter(){
   const s = active(), p = portOf(s);
   $("foot").innerHTML = s.capture === "on"
-    ? `<span class="dot capon"></span>${esc(t("footCap").replace("{name}", p.name))}`
+    ? `<span class="dot capon"></span>${esc(t("footCap").replace("{name}", p ? p.name : t("noPort")))}`
     : esc(t("footIdle"));
 }
 
 function renderAll(){
-  renderTabs(); renderManage(); renderSessionCard(); renderCombo(); renderBaud(); renderSegments();
+  renderTabs(); renderSessionCard(); renderCombo(); renderBaud(); renderSegments();
   renderCapture(); renderIdentity(false); renderFooter(); renderDiag();
 }
 function renderDiag(){ $("diag-text").textContent = t("diagBody"); }
