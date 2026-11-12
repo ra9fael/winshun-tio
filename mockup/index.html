@@ -27,6 +27,7 @@ html[data-theme="dark"]{
   --shadow:0 2px 8px rgba(0,0,0,.5),0 16px 40px rgba(0,0,0,.45);
 }
 *{box-sizing:border-box}
+[hidden]{display:none!important}
 body{margin:0;padding:28px 16px;background:#6b6b76;font-family:var(--font);
   display:flex;flex-direction:column;align-items:center;gap:14px;min-height:100vh;font-size:13.5px}
 
@@ -42,7 +43,7 @@ body{margin:0;padding:28px 16px;background:#6b6b76;font-family:var(--font);
 /* ---- the window ---------------------------------------------------------- */
 .window{width:880px;max-width:100%;height:740px;background:var(--window);color:var(--text);
   border:1px solid var(--border);border-radius:var(--r-card);box-shadow:var(--shadow);
-  display:flex;flex-direction:column;overflow:hidden}
+  display:flex;flex-direction:column;overflow:hidden;position:relative}
 .titlebar{display:flex;align-items:center;gap:8px;padding:9px 12px;background:var(--card);
   border-bottom:1px solid var(--border)}
 .titlebar .glyph{width:16px;height:16px;border-radius:4px;background:var(--accent);
@@ -52,9 +53,10 @@ body{margin:0;padding:28px 16px;background:#6b6b76;font-family:var(--font);
 
 /* ---- session tab strip: browser-style, the + lives here ------------------- */
 .tabstrip{display:flex;align-items:stretch;background:var(--card);
-  border-bottom:1px solid var(--border);padding:0 8px;overflow-x:auto}
-.tabstrip::-webkit-scrollbar{height:6px}
-.tabstrip::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+  border-bottom:1px solid var(--border);padding:0 8px}
+.tabs{display:flex;align-items:stretch;flex:1;min-width:0;overflow-x:auto}
+.tabs::-webkit-scrollbar{height:6px}
+.tabs::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
 .stab{display:flex;align-items:center;gap:8px;padding:10px 10px 9px;cursor:pointer;
   border:none;border-bottom:2px solid transparent;background:transparent;color:var(--subtext);
   white-space:nowrap;user-select:none;font:inherit}
@@ -76,15 +78,17 @@ body{margin:0;padding:28px 16px;background:#6b6b76;font-family:var(--font);
 .tabbtn:focus-visible,.stab:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 
 /* the + picker: a dropdown anchored under the tab strip, NOT a card at the bottom */
-.plusmenu{position:relative}
-.pluspanel{position:absolute;top:calc(100% + 4px);right:8px;z-index:8;min-width:320px;
+.pluspanel{position:absolute;top:84px;right:10px;z-index:12;min-width:320px;
   background:var(--card);border:1px solid var(--border);border-radius:var(--r-ctl);
   padding:6px;display:none;box-shadow:var(--shadow)}
-.plusmenu.open .pluspanel{display:block}
+.pluspanel.open{display:block}
 .pluspanel .title{font-size:10.5px;color:var(--faint);letter-spacing:.04em;
   text-transform:uppercase;padding:4px 8px 6px}
 .pluspanel .opt{padding:7px 10px;border-radius:var(--r-small);cursor:pointer}
 .pluspanel .opt:hover{background:var(--hover)}
+.pluspanel .opt.used{opacity:.55;cursor:default}
+.pluspanel .opt.used:hover{background:transparent}
+.pluspanel .opt .held{color:var(--warn)}
 .pluspanel .opt .n{display:block;font-size:12.5px}
 .pluspanel .opt .s{display:block;font-size:10.5px;color:var(--subtext);font-family:var(--mono);
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -200,6 +204,40 @@ a.src:hover{border-bottom-style:solid}
   color:var(--subtext);white-space:nowrap;justify-self:end}
 .pkgrow .tag.nb{color:var(--warn)}
 
+/* session management: one row per session, actions on that session's own content */
+.mgmt{display:flex;flex-direction:column;gap:5px}
+.mhead,.mrow{display:grid;grid-template-columns:minmax(170px,1.4fr) 78px 92px 104px 188px;
+  gap:10px;align-items:center;padding:6px 8px;font-size:11.5px}
+.mhead{color:var(--faint);font-size:10.5px;letter-spacing:.03em;padding-bottom:0}
+.mrow{border:1px solid var(--border);border-radius:var(--r-small)}
+.mrow.cur{background:var(--sunken)}
+.mrow .who{display:flex;flex-direction:column;gap:2px;min-width:0}
+.mrow .who .top{display:flex;align-items:center;gap:6px}
+.mrow .who .com{font-size:12.5px;font-weight:600;color:var(--text)}
+.mrow .who .curtag{font-size:9.5px;color:var(--accent);border:1px solid currentColor;
+  border-radius:999px;padding:0 5px;white-space:nowrap}
+.mrow .who .nm{font-size:10.5px;color:var(--subtext);white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis}
+.mrow .dot{width:7px;height:7px;border-radius:50%;flex:none;display:inline-block}
+.mrow .st{font-size:11px;color:var(--subtext)}
+.mrow .cnt{font-family:var(--mono);font-size:10.5px;color:var(--subtext);white-space:nowrap}
+.mrow .acts{display:flex;gap:5px;justify-content:flex-end;flex-wrap:wrap}
+.mrow .acts button{padding:3px 8px;font-size:11px}
+.tagcap{font-size:10px;border-radius:999px;padding:0 6px;border:1px solid var(--border);
+  color:var(--subtext);white-space:nowrap}
+.tagcap.on{color:var(--danger);border-color:var(--danger)}
+.mgmt .hint{font-size:10.5px;color:var(--subtext)}
+
+/* confirm dialog inside the window (never a browser confirm()) */
+.mask{position:absolute;inset:0;background:rgba(0,0,0,.38);display:none;
+  align-items:center;justify-content:center;z-index:20}
+.mask.show{display:flex}
+.dialog{background:var(--card);border:1px solid var(--border);border-radius:var(--r-card);
+  box-shadow:var(--shadow);padding:16px;width:370px;display:flex;flex-direction:column;gap:12px}
+.dialog h3{margin:0;font-size:13.5px}
+.dialog p{margin:0;font-size:12px;color:var(--subtext);line-height:1.5}
+.dialog .row{justify-content:flex-end;gap:8px}
+
 .toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);background:var(--text);
   color:var(--window);font-size:12px;border-radius:999px;padding:6px 16px;opacity:0;
   transition:opacity .25s;pointer-events:none;z-index:9}
@@ -209,14 +247,17 @@ a.src:hover{border-bottom-style:solid}
 <body>
 
 <div class="demo">
-  <span class="tag">演示控制 · 不属于窗口</span>
-  <label>主题 <select id="demo-theme"><option value="light">浅色</option><option value="dark">深色</option></select></label>
-  <label>语言 <select id="demo-lang"><option value="zh">中文</option><option value="en">English</option></select></label>
-  <label>演示状态 <select id="demo-state">
-    <option value="keep">跟随页签</option>
-    <option value="idle">全部空闲</option>
-    <option value="capturing">当前会话捕获中</option>
-    <option value="removed">当前端口已拔出</option>
+  <span class="tag" data-i18n="demoTag">演示控制 · 不属于窗口</span>
+  <label><span data-i18n="demoTheme">主题</span>
+    <select id="demo-theme"><option value="light" data-i18n="themeLight">浅色</option><option value="dark" data-i18n="themeDark">深色</option></select></label>
+  <label><span data-i18n="demoLang">WinShun 语言（窗口跟随宿主）</span>
+    <select id="demo-lang"><option value="zh">中文</option><option value="en">English</option></select></label>
+  <label><span data-i18n="demoState">演示状态</span>
+    <select id="demo-state">
+    <option value="keep" data-i18n="stateKeep">跟随页签</option>
+    <option value="idle" data-i18n="stateIdle">全部空闲</option>
+    <option value="capturing" data-i18n="stateCapturing">当前会话捕获中</option>
+    <option value="removed" data-i18n="stateRemoved">当前端口已拔出</option>
   </select></label>
 </div>
 
@@ -228,7 +269,14 @@ a.src:hover{border-bottom-style:solid}
   </div>
 
   <!-- ---- the session tab strip: tabs AND the + live here ------------------- -->
-  <div class="tabstrip" id="tabstrip" role="tablist"></div>
+  <div class="tabstrip">
+    <div class="tabs" id="tabs" role="tablist"></div>
+    <button class="tabbtn" id="tab-plus" aria-haspopup="true" aria-expanded="false">＋</button>
+  </div>
+  <div class="pluspanel" id="pluspanel">
+    <div class="title" id="plus-title"></div>
+    <div id="plus-opts"></div>
+  </div>
 
   <!-- ---- everything below is ONE tab's pane; switching tabs swaps it ------- -->
   <div class="pane" id="pane">
@@ -250,6 +298,27 @@ a.src:hover{border-bottom-style:solid}
       <div class="row"><span class="lbl" data-i18n="pid">PID</span><span class="hint" id="sess-pid"></span></div>
       <div class="row"><span class="lbl"></span>
         <span class="hint" data-i18n="sessCaveat">“已启动”不等于“端口已打开”：端口状态只有在上游给出可验证信号时才会变化。</span></div>
+    </section>
+
+    <!-- 会话管理：全部会话一屏；每行只操作该会话自己的内容 -->
+    <section class="card">
+      <div class="head">
+        <h2 data-i18n="groupManage">会话管理</h2>
+        <span class="note" id="mgmt-note"></span>
+        <span class="spacer"></span>
+        <span class="chip" id="mgmt-chip"></span>
+      </div>
+      <div class="mgmt">
+        <div class="mhead">
+          <span data-i18n="colSession">会话</span>
+          <span data-i18n="colState">状态</span>
+          <span data-i18n="colCapture">捕获</span>
+          <span data-i18n="colContent">内容</span>
+          <span style="text-align:right" data-i18n="colActions">操作</span>
+        </div>
+        <div id="mgmt-rows"></div>
+      </div>
+      <span class="hint" data-i18n="manageHint">查看会切到那个页签并滚到会话内容；复制与保存只取那个会话自己的捕获，不混入别的会话。</span>
     </section>
 
     <!-- 端口与参数 -->
@@ -284,11 +353,11 @@ a.src:hover{border-bottom-style:solid}
         <span class="hint" data-i18n="flowHint">hard 时 RTS 由流控管理，不承诺固定电平</span></div>
     </section>
 
-    <!-- 会话捕获：明确的权限边界 -->
-    <section class="card">
-      <div class="head"><h2 data-i18n="groupCapture">会话捕获</h2>
+    <!-- 会话内容：当前页签的捕获，权限边界写在卡里 -->
+    <section class="card" id="content-card">
+      <div class="head"><h2 data-i18n="groupContent">会话内容</h2>
         <span class="note" id="cap-note"></span>
-        <span class="chip" id="cap-chip" data-i18n="capOff">未捕获</span></div>
+        <span class="chip" id="cap-chip"></span></div>
       <div class="permbar" id="permbar" hidden>
         <span class="t" data-i18n="permText">捕获会读取串口收发的全部字节，并保留在本机。这打破了插件「不读取串口内容」的默认边界：需要新的 serial:read 权限，且只对这一个会话生效，可随时关闭。</span>
         <button class="primary" id="perm-yes" data-i18n="permAllow">允许本会话捕获</button>
@@ -362,15 +431,22 @@ a.src:hover{border-bottom-style:solid}
     <section class="card">
       <div class="head"><h2 data-i18n="groupDiag">诊断</h2>
         <span class="note" data-i18n="diagNote">不含串口内容</span></div>
-      <textarea readonly>ra9fael.tio launcher
-package   : 0.1.0
-integrity : valid
-backend   : wt 1.25.2733.0 · conhost
-capture   : off (serial content never read unless a session capture is on)
-privacy   : captured bytes stay local; no upload, no telemetry</textarea>
+      <textarea readonly id="diag-text" rows="7"></textarea>
       <div class="row" style="justify-content:flex-end">
         <button data-i18n="copyDiag">复制诊断</button></div>
     </section>
+  </div>
+
+  <!-- 关闭运行中的会话：窗口内的确认，不用浏览器 confirm() -->
+  <div class="mask" id="close-mask">
+    <div class="dialog">
+      <h3 data-i18n="closeDlgTitle">会话还在运行</h3>
+      <p id="close-dlg-text"></p>
+      <div class="row">
+        <button class="stop" id="close-yes" data-i18n="closeDlgYes">停止并关闭</button>
+        <button id="close-no" data-i18n="closeDlgNo">取消</button>
+      </div>
+    </div>
   </div>
 
   <div class="footer">
@@ -402,7 +478,7 @@ const I18N = {
     groupPort:"端口与参数", locked:"会话运行中 · 锁定", refresh:"刷新",
     baud:"波特率", dataBits:"数据位", parity:"校验", stopBits:"停止位", flow:"流控",
     flowHint:"hard 时 RTS 由流控管理，不承诺固定电平",
-    groupCapture:"会话捕获", capOff:"未捕获", capOn:"捕获中", capStart:"开始捕获",
+    groupContent:"会话内容", capOff:"未捕获", capOn:"捕获中", capStart:"开始捕获",
     capture:"捕获",
     capStop:"停止捕获", permText:"捕获会读取串口收发的全部字节，并保留在本机。这打破了插件「不读取串口内容」的默认边界：需要新的 serial:read 权限，且只对这一个会话生效，可随时关闭。",
     permAllow:"允许本会话捕获", permDeny:"暂不", copyAll:"复制全部",
@@ -432,16 +508,29 @@ const I18N = {
     footIdle:"终端由 Windows Terminal 或 conhost 提供；捕获关闭时不读取任何串口内容。",
     footCap:"正在捕获 {name} 的串口内容：字节只留在本机。",
     removed:"这个端口不在了", swapped:"同一 COM 号上是另一台设备：身份已重新采集",
-    closeAsk:"会话还在运行，确定关闭这个页签？", yes:"关闭会话", no:"取消",
-    inUse:"这个端口已经在别的会话里", plusTitle:"新建会话：选一个没人占用的端口",
-    plusEmpty:"没有空闲端口了：每个会话占用一个端口" },
+    closeDlgTitle:"会话还在运行", closeDlgText:"{name} 的进程还在跑。关闭页签会先停止它，再丢弃这个页签。",
+    closeDlgYes:"停止并关闭", closeDlgNo:"取消",
+    inUse:"这个端口已经在别的会话里", plusTitle:"选择未被占用的串口",
+    plusEmpty:"没有未被占用的串口：每个会话占用一个端口",
+    groupManage:"会话管理", colSession:"会话", colState:"状态", colCapture:"捕获",
+    colContent:"内容", colActions:"操作", currentTab:"当前",
+    actView:"查看", actCopy:"复制", actSave:"保存", actClose:"关闭", heldShort:"已占用",
+    linesShort:"行", created:"已新建会话",
+    noContent:"还没有内容：会话运行后开始捕获",
+    manageHint:"查看会切到那个页签并滚到会话内容；复制与保存只取那个会话自己的捕获，不混入别的会话。",
+    mgmtNote:"全部 {n} 个会话 · 运行中 {run} · 捕获中 {cap}",
+    demoTag:"演示控制 · 不属于窗口", demoTheme:"主题", demoLang:"WinShun 语言（窗口跟随宿主）",
+    demoState:"演示状态", themeLight:"浅色", themeDark:"深色",
+    stateKeep:"跟随页签", stateIdle:"全部空闲", stateCapturing:"当前会话捕获中",
+    stateRemoved:"当前端口已拔出",
+    diagBody:"ra9fael.tio 启动器\n包版本    : 0.1.0\n完整性    : 有效\n后端      : wt 1.25.2733.0 · conhost\n捕获      : 关（不开启会话捕获就不读取任何串口内容）\n隐私      : 捕获的字节只留在本机；不上传、不遥测" },
   en:{ app:"tio serial terminal", groupSession:"Session", phase:"Phase", portState:"Port state", pid:"PID",
     launch:"Launch", stop:"Stop", restart:"Restart", clone:"Clone",
     sessCaveat:"\"Started\" is not \"port open\": the port state changes only when the upstream gives a verifiable signal.",
     groupPort:"Port & parameters", locked:"session running · locked", refresh:"Refresh",
     baud:"Baud rate", dataBits:"Data bits", parity:"Parity", stopBits:"Stop bits", flow:"Flow control",
     flowHint:"with hard flow the RTS follows the flow, not a fixed level",
-    groupCapture:"Session capture", capOff:"not capturing", capOn:"capturing", capStart:"Start capture",
+    groupContent:"Session content", capOff:"not capturing", capOn:"capturing", capStart:"Start capture",
     capture:"Capture",
     capStop:"Stop capture", permText:"Capture reads every byte the session sends and receives, kept on this machine. It breaks the plugin's default \"serial content is never read\" boundary: a new serial:read permission is required, it applies to this session only, and it can be turned off at any time.",
     permAllow:"Allow capture for this session", permDeny:"Not now", copyAll:"Copy all",
@@ -471,9 +560,23 @@ const I18N = {
     footIdle:"Windows Terminal or conhost provides the terminal; with capture off, no serial byte is read.",
     footCap:"Capturing serial content of {name}: bytes stay on this machine.",
     removed:"this port is gone", swapped:"another device now sits on this COM number: the identity was recaptured",
-    closeAsk:"The session is still running. Close this tab anyway?", yes:"Close session", no:"Cancel",
-    inUse:"that port is already held by another session", plusTitle:"New session: pick a port nobody holds",
-    plusEmpty:"no free ports: every session holds one" }
+    closeDlgTitle:"The session is still running", closeDlgText:"The process behind {name} is still running. Closing the tab stops it first, then drops the tab.",
+    closeDlgYes:"Stop and close", closeDlgNo:"Cancel",
+    inUse:"that port is already held by another session", plusTitle:"Pick an unused port",
+    plusEmpty:"no unused port: every session holds one",
+    groupManage:"Session management", colSession:"Session", colState:"State", colCapture:"Capture",
+    colContent:"Content", colActions:"Actions", currentTab:"current",
+    actView:"View", actCopy:"Copy", actSave:"Save", actClose:"Close", heldShort:"in use",
+    linesShort:"lines", created:"New session",
+    noContent:"no content yet: capture begins once the session runs",
+    manageHint:"View switches to that tab and scrolls to its content; Copy and Save take only that session's capture.",
+    mgmtNote:"{n} sessions · {run} running · {cap} capturing",
+    demoTag:"demo controls · not part of the window", demoTheme:"Theme",
+    demoLang:"WinShun language (the window follows the host)",
+    demoState:"Demo state", themeLight:"Light", themeDark:"Dark",
+    stateKeep:"follow the tab", stateIdle:"all idle", stateCapturing:"current session capturing",
+    stateRemoved:"current port unplugged",
+    diagBody:"ra9fael.tio launcher\npackage   : 0.1.0\nintegrity : valid\nbackend   : wt 1.25.2733.0 · conhost\ncapture   : off (serial content is never read unless a session capture is on)\nprivacy   : captured bytes stay local; no upload, no telemetry" }
 };
 
 const RATES = [9600,19200,38400,57600,115200,230400,460800,921600,1500000];
@@ -487,6 +590,7 @@ const SEGS = [
 const $ = id => document.getElementById(id);
 let lang = "zh", activeId = 0, nextId = 2, detailsOpen = false, collectTimer = null, capTimer = null;
 const t = k => I18N[lang][k];
+const stKey = s => "st" + s.state.charAt(0).toUpperCase() + s.state.slice(1);
 const esc = s => String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
 const clock = () => new Date().toTimeString().slice(0,8);
 
@@ -508,7 +612,7 @@ const portOf = s => PORTS.find(p => p.com === s.com);
 
 /* ---- the tab strip: tabs AND the + dropdown live here ------------------ */
 function renderTabs(){
-  $("tabstrip").innerHTML = SESSIONS.map(s => {
+  $("tabs").innerHTML = SESSIONS.map(s => {
     const p = portOf(s);
     const cap = s.capture === "on" ? " cap" : "";
     return `<button class="stab ${s.id===activeId?"active":""}" role="tab" tabindex="0"
@@ -517,27 +621,20 @@ function renderTabs(){
       <span class="dot ${s.state}${cap}"></span>
       <span class="com">COM${s.com}</span>
       <span class="nm">${esc(p ? p.name : "")}</span>
-      <span class="close" data-close="${s.id}" title="${esc(t("stop"))}">✕</span>
+      <span class="close" data-close="${s.id}" title="${esc(t("actClose"))}">✕</span>
     </button>`;
-  }).join("") +
-  `<span class="plusmenu" id="plusmenu">
-     <button class="tabbtn" id="tab-plus" aria-haspopup="true"
-       aria-expanded="false" title="${esc(t("plusTitle"))}">＋</button>
-     <div class="pluspanel" id="pluspanel">
-       <div class="title">${esc(t("plusTitle"))}</div>
-       <div id="plus-opts"></div>
-     </div>
-   </span>`;
-  $("tabstrip").querySelectorAll(".stab[data-id]").forEach(el => {
+  }).join("");
+  $("tabs").querySelectorAll(".stab[data-id]").forEach(el => {
     el.onclick = e => { if (!e.target.closest(".close")) switchTo(+el.dataset.id); };
     el.onkeydown = e => { if (e.key === "Enter") switchTo(+el.dataset.id); };
   });
-  $("tabstrip").querySelectorAll("[data-close]").forEach(b => {
+  $("tabs").querySelectorAll("[data-close]").forEach(b => {
     b.onclick = e => { e.stopPropagation(); closeSession(+b.dataset.close); };
   });
+  $("plus-title").textContent = t("plusTitle");
   $("tab-plus").onclick = e => {
     e.stopPropagation();
-    const open = $("plusmenu").classList.toggle("open");
+    const open = $("pluspanel").classList.toggle("open");
     $("tab-plus").setAttribute("aria-expanded", String(open));
     if (open) renderPlusOptions();
   };
@@ -546,40 +643,117 @@ function renderTabs(){
 
 function renderPlusOptions(){
   const free = PORTS.filter(p => !SESSIONS.some(s => s.com === p.com));
-  $("plus-opts").innerHTML = free.length ? free.map(p =>
-    `<div class="opt" tabindex="0" role="option" data-com="${p.com}">
-      <span class="n">${esc(p.name)}</span>
-      <span class="s">${esc(p.device)} · ${esc(p.identity)}</span></div>`).join("")
-    : `<div class="empty">${esc(t("plusEmpty"))}</div>`;
+  const hint = free.length ? "" : `<div class="empty">${esc(t("plusEmpty"))}</div>`;
+  $("plus-opts").innerHTML = hint + PORTS.map(p => {
+    const held = SESSIONS.find(s => s.com === p.com);
+    return `<div class="opt${held ? " used" : ""}" tabindex="${held ? "-1" : "0"}"
+        role="option"${held ? "" : ` data-com="${p.com}"`}>
+      <span class="n">${esc(p.name)}${held ? ` · <span class="held">${esc(t("heldShort"))}</span>` : ""}</span>
+      <span class="s">${esc(p.device)} · ${esc(p.identity)}</span></div>`;
+  }).join("");
   $("plus-opts").querySelectorAll("[data-com]").forEach(el => {
-    el.onclick = () => { createSession(+el.dataset.com); $("plusmenu").classList.remove("open"); };
+    el.onclick = () => { createSession(+el.dataset.com); $("pluspanel").classList.remove("open");
+      $("tab-plus").setAttribute("aria-expanded", "false"); };
     el.onkeydown = e => { if (e.key === "Enter"){ e.preventDefault();
-      createSession(+el.dataset.com); $("plusmenu").classList.remove("open"); } };
+      createSession(+el.dataset.com); $("pluspanel").classList.remove("open");
+      $("tab-plus").setAttribute("aria-expanded", "false"); } };
   });
 }
 document.addEventListener("click", e => {
-  if (!e.target.closest("#plusmenu")) $("plusmenu").classList.remove("open");
+  if (!e.target.closest("#pluspanel") && !e.target.closest("#tab-plus"))
+    $("pluspanel").classList.remove("open");
 });
 
 function createSession(com){
   const s = { id:nextId++, com, state:"idle", capture:"off", permitted:false, pid:0,
     params:{ baud:115200, dataBits:"8", parity:"none", stopBits:"1", flow:"none" },
     started:null, lines:[{ cls:"sys", text:`[COM${com}]` }] };
-  SESSIONS.push(s); switchTo(s.id); toast(t("saved"));
+  SESSIONS.push(s); switchTo(s.id); toast(t("created") + " COM" + com);
 }
 
 /* ---- session lifecycle (simulated) ---- */
 function switchTo(id){ activeId = id; renderAll(); }
+
+// Closing a running tab stops its process first: the tab is the only handle.
+let pendingClose = null;
 function closeSession(id){
   const s = SESSIONS.find(x => x.id === id);
-  if ((s.state === "running" || s.state === "starting") && !confirm(t("closeAsk"))) return;
-  SESSIONS.splice(SESSIONS.indexOf(s), 1);
+  if (!s) return;
+  if (s.state === "running" || s.state === "starting"){
+    pendingClose = s;
+    $("close-dlg-text").textContent = t("closeDlgText").replace("{name}", "COM" + s.com);
+    $("close-mask").classList.add("show");
+    return;
+  }
+  removeSession(s);
+}
+function removeSession(s){
+  clearInterval(capTimer);
+  if (s.capture === "on") s.capture = "off";
+  const i = SESSIONS.indexOf(s);
+  if (i >= 0) SESSIONS.splice(i, 1);
   if (!SESSIONS.length){ SESSIONS.push({ id:nextId++, com:PORTS[0].com, state:"idle",
     capture:"off", permitted:false, pid:0,
     params:{ baud:115200, dataBits:"8", parity:"none", stopBits:"1", flow:"none" },
     started:null, lines:[] }); }
-  if (activeId === id) activeId = SESSIONS[0].id;
+  if (activeId === s.id) activeId = SESSIONS[0].id;
   renderAll();
+}
+$("close-yes").onclick = () => {
+  const s = pendingClose; pendingClose = null;
+  $("close-mask").classList.remove("show");
+  if (!s) return;
+  s.state = "stopping"; renderAll();
+  setTimeout(() => { s.state = "idle"; s.pid = 0; removeSession(s); }, 500);
+};
+$("close-no").onclick = () => { pendingClose = null; $("close-mask").classList.remove("show"); };
+
+/* ---- session management: every session, its own content ---- */
+function countText(s){
+  const bytes = s.lines.reduce((n, l) => n + l.text.length, 0);
+  return `${s.lines.length} ${t("linesShort")} · ${bytes} B`;
+}
+function renderManage(){
+  const run = SESSIONS.filter(s => s.state === "running" || s.state === "starting").length;
+  const cap = SESSIONS.filter(s => s.capture === "on").length;
+  $("mgmt-note").textContent = t("mgmtNote").replace("{n}", SESSIONS.length)
+    .replace("{run}", run).replace("{cap}", cap);
+  $("mgmt-chip").textContent = cap ? t("capOn") : t("capOff");
+  $("mgmt-chip").style.color = cap ? "var(--danger)" : "";
+  $("mgmt-rows").innerHTML = SESSIONS.map(s => {
+    const p = portOf(s), on = s.capture === "on", empty = !s.lines.length;
+    return `<div class="mrow${s.id === activeId ? " cur" : ""}" data-row="${s.id}">
+      <span class="who">
+        <span class="top"><span class="dot ${s.state}${on ? " cap" : ""}"></span>
+          <span class="com">COM${s.com}</span>
+          ${s.id === activeId ? `<span class="curtag">${esc(t("currentTab"))}</span>` : ""}</span>
+        <span class="nm" title="${esc(p ? p.name : "")}">${esc(p ? p.name : "")}</span>
+      </span>
+      <span class="st">${esc(t(stKey(s)))}</span>
+      <span><span class="tagcap${on ? " on" : ""}">${esc(on ? t("capOn") : t("capOff"))}</span></span>
+      <span class="cnt">${empty ? "—" : esc(countText(s))}</span>
+      <span class="acts">
+        <button data-act="view">${esc(t("actView"))}</button>
+        <button data-act="copy"${empty ? " disabled" : ""}>${esc(t("actCopy"))}</button>
+        <button data-act="save"${empty ? " disabled" : ""}>${esc(t("actSave"))}</button>
+        <button data-act="close">${esc(t("actClose"))}</button>
+      </span>
+    </div>`;
+  }).join("");
+  $("mgmt-rows").querySelectorAll("[data-act]").forEach(b => {
+    b.onclick = () => {
+      const row = +b.closest("[data-row]").dataset.row;
+      const s = SESSIONS.find(x => x.id === row);
+      if (!s) return;
+      const act = b.dataset.act;
+      if (act === "view"){
+        switchTo(s.id);
+        $("content-card").scrollIntoView({ behavior:"smooth", block:"start" });
+      } else if (act === "copy") copySession(s);
+      else if (act === "save") saveSession(s);
+      else if (act === "close") closeSession(s.id);
+    };
+  });
 }
 $("btn-launch").onclick = () => {
   const s = active(); if (s.state !== "idle") return;
@@ -663,21 +837,27 @@ function fill(p){
 
 /* ---- capture: the new capability, with an explicit permission gate ---- */
 function renderCapture(){
-  const s = active();
+  const s = active(), p = portOf(s);
   const on = s.capture === "on";
   $("cap-chip").textContent = on ? t("capOn") : t("capOff");
   $("cap-chip").style.color = on ? "var(--danger)" : "";
   $("btn-capture").textContent = on ? t("capStop") : t("capStart");
   $("btn-capture").disabled = s.state !== "running" && !on;
-  $("cap-note").textContent = s.state === "running" ? "" : t("capNeedRun");
-  const bytes = s.lines.reduce((n,l) => n + l.text.length, 0);
-  $("cap-stats").textContent = on ? `${s.lines.length} ln · ${bytes} B · ${s.started ?? ""}` : "";
+  $("cap-note").textContent = p.name;
+  const bytes = s.lines.reduce((n, l) => n + l.text.length, 0);
+  $("cap-stats").textContent = on
+    ? `${s.lines.length} ${t("linesShort")} · ${bytes} B · ${s.started ?? ""}` : "";
   $("permbar").hidden = s.permitted || on;
+  $("btn-copy").disabled = !s.lines.length;
+  $("btn-save").disabled = !s.lines.length;
+  $("btn-script").disabled = !s.lines.some(l => l.cls === "in");
   renderTerm(s);
 }
 function renderTerm(s){
-  $("term").innerHTML = s.lines.map(l =>
-    `<span class="${l.cls}">${esc(l.text)}\n</span>`).join("") || `<span class="sys">${esc(t("capNeedRun"))}</span>`;
+  const body = s.lines.map(l =>
+    `<span class="${l.cls}">${esc(l.text)}\n</span>`).join("");
+  $("term").innerHTML = body
+    || `<span class="sys">${esc(s.state === "running" ? t("noContent") : t("capNeedRun"))}</span>`;
   $("term").scrollTop = $("term").scrollHeight;
 }
 $("btn-capture").onclick = () => {
@@ -708,16 +888,19 @@ function download(name, text){
   a.download = name; a.click(); URL.revokeObjectURL(a.href);
 }
 function sessionText(s){ return s.lines.map(l => l.text).join("\n") + "\n"; }
-$("btn-copy").onclick = async () => {
-  try { await navigator.clipboard.writeText(sessionText(active())); }
-  catch { const ta = document.createElement("textarea"); ta.value = sessionText(active());
+async function copySession(s){
+  const text = sessionText(s);
+  try { await navigator.clipboard.writeText(text); }
+  catch { const ta = document.createElement("textarea"); ta.value = text;
     document.body.appendChild(ta); ta.select(); document.execCommand("copy"); ta.remove(); }
   toast(t("copied"));
-};
-$("btn-save").onclick = () => {
-  const s = active();
-  download(`tio-session-com${s.com}-${Date.now()}.log`, sessionText(s)); toast(t("saved"));
-};
+}
+function saveSession(s){
+  download(`tio-session-com${s.com}-${Date.now()}.log`, sessionText(s));
+  toast(t("saved"));
+}
+$("btn-copy").onclick = () => copySession(active());
+$("btn-save").onclick = () => saveSession(active());
 $("btn-script").onclick = () => {
   const s = active();
   const ins = s.lines.filter(l => l.cls === "in").map(l => l.text.replace(/^>\s?/, ""));
@@ -815,7 +998,7 @@ function renderSessionCard(){
   const s = active(), p = portOf(s);
   $("sess-note").textContent = p.name;
   $("sess-chip").textContent = s.pid ? "PID " + s.pid : "COM" + s.com;
-  $("sess-phase").textContent = t("st" + s.state);
+  $("sess-phase").textContent = t(stKey(s));
   $("sess-port").textContent = t("psUnknown");
   $("sess-pid").textContent = s.pid || "—";
   const running = s.state !== "idle";
@@ -866,18 +1049,22 @@ function renderFooter(){
 }
 
 function renderAll(){
-  renderTabs(); renderSessionCard(); renderCombo(); renderBaud(); renderSegments();
-  renderCapture(); renderIdentity(false); renderFooter();
+  renderTabs(); renderManage(); renderSessionCard(); renderCombo(); renderBaud(); renderSegments();
+  renderCapture(); renderIdentity(false); renderFooter(); renderDiag();
 }
+function renderDiag(){ $("diag-text").textContent = t("diagBody"); }
 
 /* ---- demo strip ---- */
 function applyLangToStatic(){
+  document.documentElement.lang = lang;
+  document.title = lang === "zh"
+    ? "tio 串口终端 — 多会话交互稿"
+    : "tio serial terminal — multi-session mockup";
   document.querySelectorAll("[data-i18n]").forEach(el => { el.textContent = t(el.dataset.i18n); });
 }
 $("demo-theme").onchange = e => document.documentElement.dataset.theme = e.target.value;
 $("demo-lang").onchange = e => { lang = e.target.value; applyLangToStatic(); renderAll(); };
-$("demo-state").onchange = e => {
-  const v = e.target.value;
+function applyDemoState(v){
   if (v === "idle") SESSIONS.forEach(s => { s.state = "idle"; s.pid = 0; s.capture = "off"; });
   if (v === "capturing"){ const s = active(); s.permitted = true;
     if (s.state !== "running"){ s.state = "running"; s.pid = s.pid || 20001; s.started = clock(); }
@@ -885,17 +1072,27 @@ $("demo-state").onchange = e => {
   if (v === "removed"){ const s = active();
     s.lines.push({cls:"sys", text:"[" + t("removed") + "]"}); s.state = "idle"; }
   renderAll();
-};
+}
+$("demo-state").onchange = e => applyDemoState(e.target.value);
 
 function toast(msg){
   const el = $("toast"); el.textContent = msg; el.classList.add("show");
   setTimeout(() => el.classList.remove("show"), 1600);
 }
 
+/* Review links: ?lang=en and ?theme=dark open the mockup in the host's other
+   language and theme, the same two values WinShun passes to the window. */
+const REVIEW = new URLSearchParams(location.search);
+if (REVIEW.get("lang") === "en"){ lang = "en"; $("demo-lang").value = "en"; }
+if (REVIEW.get("theme") === "dark"){ document.documentElement.dataset.theme = "dark";
+  $("demo-theme").value = "dark"; }
+if (REVIEW.get("state") === "capturing") $("demo-state").value = "capturing";
+
 applyLangToStatic();
 setDetailsOpen(false);
 renderPkg();
 renderAll();
+if (REVIEW.get("state") === "capturing") applyDemoState("capturing");
 </script>
 </body>
 </html>
