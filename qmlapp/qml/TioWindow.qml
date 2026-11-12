@@ -441,6 +441,19 @@ Window {
                             Layout.fillWidth: true
                             Layout.preferredHeight: DesignTokens.rowHeight
                             model: typeof tio !== "undefined" ? tio.ports : []
+                            // A screenshot run may ask for the list to start
+                            // open. It waits for the window to be on screen:
+                            // a popup opened while the component is still
+                            // completing has no window to attach to.
+                            Component.onCompleted: {
+                                if (typeof openPortListOnStart !== "undefined" && openPortListOnStart)
+                                    openListTimer.start()
+                            }
+                            Timer {
+                                id: openListTimer
+                                interval: 400
+                                onTriggered: portBox.popup.open()
+                            }
                             // What the closed box shows is what Device Manager
                             // shows under Ports (COM & LPT): the friendly name,
                             // which already ends in "(COMn)".
@@ -461,12 +474,18 @@ Window {
                             }
                             displayText: currentIndex >= 0 ? currentText : window.tr("（无可用端口）", "(no port)")
                             delegate: ItemDelegate {
+                                id: portOption
                                 required property var modelData
+                                required property int index
                                 width: portBox.width
-                                height: DesignTokens.rowHeight
+                                // Two lines (the Device Manager name and the
+                                // device path): the entry is as tall as what it
+                                // shows, not as tall as a single-line row.
+                                height: Math.max(DesignTokens.rowHeight,
+                                                 portOption.contentItem.implicitHeight + 14)
                                 highlighted: portBox.highlightedIndex === index
                                 contentItem: ColumnLayout {
-                                    spacing: 0
+                                    spacing: 3
                                     Label {
                                         // The line Device Manager shows, plus where
                                         // the port sits in tio's numbering.

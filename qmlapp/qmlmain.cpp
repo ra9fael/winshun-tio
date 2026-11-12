@@ -40,6 +40,9 @@ namespace {
 
 QQmlApplicationEngine* g_engine = nullptr;
 bool g_testDetailsOpen = false;
+// --ports-open: the port dropdown starts open, so a screenshot can check the
+// entry layout (two lines per entry) without driving the mouse.
+bool g_testPortsOpen = false;
 
 QString appDirectory()
 {
@@ -110,6 +113,9 @@ bool openWindow(QString& error)
         tioplug::windowModel()->setCardCollapsed(u"设备详情"_s, false);
         tioplug::windowModel()->setCardCollapsed(u"Device details"_s, false);
     }
+    // A screenshot of the port dropdown: the QML opens the popup on start when
+    // this context property is true (absent in a normal run, so nothing opens).
+    g_engine->rootContext()->setContextProperty(u"openPortListOnStart"_s, g_testPortsOpen);
     if (g_engine->rootObjects().isEmpty()) {
         QObject::connect(g_engine, &QQmlApplicationEngine::warnings, g_engine,
             [](const QList<QQmlError>& warnings) {
@@ -196,6 +202,8 @@ extern "C" __declspec(dllexport) int winshunTioWindow(const wchar_t* appDirName)
                 dark = true;
             if (arg == L"--details")
                 g_testDetailsOpen = true;
+            if (arg == L"--ports-open")
+                g_testPortsOpen = true;
             if (arg == L"--data-dir" && i + 1 < count)
                 dataDir = wide[i + 1];
         }

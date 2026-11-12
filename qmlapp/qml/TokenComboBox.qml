@@ -52,8 +52,12 @@ ComboBox {
     delegate: ItemDelegate {
         id: item
         required property var modelData
+        required property int index
         width: box.width
-        height: DesignTokens.rowHeight
+        // A port entry carries two lines (the friendly name and the device
+        // path); at one row height they would sit on top of each other, so the
+        // entry grows to what it actually shows.
+        height: Math.max(DesignTokens.rowHeight, item.contentItem.implicitHeight + 14)
         highlighted: box.highlightedIndex === index
 
         background: Rectangle {
@@ -61,12 +65,14 @@ ComboBox {
             color: item.highlighted ? DesignTokens.hoverColor : "transparent"
         }
         contentItem: ColumnLayout {
-            spacing: 0
+            spacing: 3
             Label {
                 text: typeof modelData === "object" && modelData !== null && "title" in modelData
                       ? modelData.title : modelData
                 color: DesignTokens.textColor
                 font.pixelSize: DesignTokens.fontCaption
+                Layout.fillWidth: true
+                elide: Text.ElideRight
             }
             Label {
                 visible: typeof modelData === "object" && modelData !== null
@@ -85,7 +91,7 @@ ComboBox {
         y: box.height + 4
         width: box.width
         padding: 4
-        implicitHeight: contentItem.implicitHeight + 8
+        implicitHeight: Math.min(contentItem.implicitHeight + 8, 320)
 
         background: Rectangle {
             radius: DesignTokens.controlRadius
@@ -99,6 +105,8 @@ ComboBox {
             model: box.popup.visible ? box.delegateModel : null
             currentIndex: box.highlightedIndex
             spacing: 2
+            boundsBehavior: Flickable.StopAtBounds
+            ScrollBar.vertical: ScrollBar {}
         }
     }
 }
