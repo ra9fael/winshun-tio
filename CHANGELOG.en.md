@@ -8,6 +8,12 @@
 - **The search box follows**: the main row still shows the saved configuration (it turns into "Stop" while a session runs that port); the window's other sessions are listed row by row under "Sessions (Enter stops)", and Enter stops exactly that row — no more stop-everything.
 - **Package integrity is verifiable**: the card gains "Third-party notes" and "File manifest" buttons that open the **in-package** `THIRD_PARTY.md` and `manifest/files.json` — per-file sources, licences and hashes; what opens is the copy the launcher verified, not a web page.
 
+### The integrity record moves into the card
+
+- **The third-party record is inside the card**: the package integrity card now explains what the package carries — a summary line gives the tio version, the runtime file count and the size (all measured from `manifest/files.json`, none of it hardcoded), and unfolding lists every component: name, version, licence, a source link that opens the upstream, the licence text that ships in the package (the copy the launcher verified), and why it is in there; components that are not bundled are marked. `THIRD_PARTY.md` and `manifest/files.json` stay at the bottom of the card as the appendix, but they are no longer the only way to read the record.
+- **A machine-readable twin**: `manifest/third-party.json` mirrors `THIRD_PARTY.md` row by row (packaging refuses to ship when the two drift, and the native probe checks that every component is named in the document and every licence text it links to is really in the package).
+- **Buttons in a card header work again**: the fold area of a card header used to cover the buttons in that header (clicking "Launch" folded the card instead) — the fold's click area now sits under the content, so a button wins.
+
 ### Earlier
 
 - **Port dropdown matches Device Manager**: each entry now shows the Windows friendly name (`SPDRP_FRIENDLYNAME`, the line Device Manager lists under Ports (COM & LPT), e.g. `Silicon Labs CP210x USB to UART Bridge (COM8)`) instead of a bare `COMn`; the second line keeps the `/dev/ttySn` mapping and the instance id.

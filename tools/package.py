@@ -51,6 +51,7 @@ BASE_FILES = [
     "docs/validation.md",
     "docs/validation.en.md",
     "manifest/files.json",
+    "manifest/third-party.json",
     "CMakeLists.txt",
     "winshun.h",
     "tio.rc",
@@ -79,6 +80,7 @@ BASE_FILES = [
     "qmlapp/qml/GroupCard.qml",
     "qmlapp/qml/FieldRow.qml",
     "qmlapp/qml/DetailLine.qml",
+    "qmlapp/qml/LinkLabel.qml",
     "tests/test_logic.cpp",
     "tests/native_probe.cpp",
     "tests/integration.py",
@@ -109,6 +111,19 @@ def licence_files() -> list[str]:
     """Every licence text in licenses/, by glob: a new one must not need an edit."""
     return sorted(f"licenses/{path.name}" for path in (ROOT / "licenses").iterdir()
                   if path.is_file())
+
+
+def third_party_files() -> list[str]:
+    """The licence texts the third-party record links to must really be here."""
+    record = json.loads((ROOT / "manifest" / "third-party.json").read_text(encoding="utf8"))
+    wanted: set[str] = set()
+    for component in record["components"]:
+        wanted.update(component.get("licenseFiles", []))
+    missing = sorted(path for path in wanted if not (ROOT / path).is_file())
+    if missing:
+        raise ValueError("the third-party record links to files that are not there: "
+                         + ", ".join(missing))
+    return sorted(wanted)
 
 
 def archive(names: list[str]) -> bytes:
@@ -165,7 +180,7 @@ def main() -> int:
     if probe.returncode != 0:
         raise ValueError("the packaged runtime does not verify:\n" + probe.stdout + probe.stderr)
 
-    names = BASE_FILES + runtime_files() + licence_files()
+    names = BASE_FILES + runtime_files() + licence_files() + third_party_files()
     payload = archive(names)
     digest = hashlib.sha256(payload).hexdigest()
 

@@ -688,50 +688,183 @@ Window {
                 }
 
                 // ---- package ----
+                // The integrity card carries the third-party record itself: what
+                // each component is, where it came from, which licence text
+                // ships with it and why it is (or is not) inside the package.
+                // Nothing here opens a text file to be believed — the links are
+                // there to check, not to be the only way to read.
                 GroupCard {
                     id: packageCard
                     title: window.tr("包完整性", "Package integrity")
                     collapsed: typeof tio !== "undefined" && tio.cardCollapsed(packageCard.title)
                     onToggled: function (folded) { tio.setCardCollapsed(packageCard.title, folded) }
-                    note: typeof tio !== "undefined" ? tio.packageVersion : ""
+                    note: typeof tio !== "undefined" && tio.packageValid
+                          ? window.tr("有效 · 每个文件都与清单一致",
+                                      "valid · every file matches the manifest")
+                          : window.tr("校验失败，不能启动", "the check failed: launch is refused")
                     warn: !(typeof tio !== "undefined" && tio.packageValid)
 
-                    RowLayout {
+                    // The summary line stays outside the fold: the reader wants
+                    // the size and the file count before deciding to unfold.
+                    Label {
                         Layout.fillWidth: true
-                        spacing: 8
-                        Label {
-                            text: typeof tio !== "undefined" && tio.packageValid
-                                  ? window.tr("有效 · 每个文件都与清单一致",
-                                              "valid · every file matches the manifest")
-                                  : window.tr("校验失败，不能启动", "the check failed: launch is refused")
-                            color: typeof tio !== "undefined" && tio.packageValid
-                                   ? DesignTokens.okColor : DesignTokens.dangerColor
-                            font.pixelSize: DesignTokens.fontCaption
-                        }
-                        Label {
-                            Layout.fillWidth: true
-                            visible: typeof tio !== "undefined" && !tio.packageValid
-                            text: typeof tio !== "undefined" ? tio.packageProblem : ""
-                            color: DesignTokens.mutedColor
-                            font.pixelSize: DesignTokens.fontSmall
-                            elide: Text.ElideRight
+                        wrapMode: Text.WordWrap
+                        color: DesignTokens.mutedColor
+                        font.pixelSize: DesignTokens.fontSmall
+                        text: {
+                            if (typeof tio === "undefined")
+                                return ""
+                            const version = tio.packageVersion.length > 0 ? tio.packageVersion : "—"
+                            return window.tr("tio " + version + " · "
+                                    + tio.packageFileCount + " 个运行时文件 · " + tio.packageSize
+                                    + " —— 展开看三方文件与来源",
+                                "tio " + version + " · " + tio.packageFileCount
+                                    + " runtime files · " + tio.packageSize
+                                    + " — unfold for third-party files and sources")
                         }
                     }
 
-                    // The package ships its own third-party record: what came
-                    // from where, under which licence, per file. The links open
-                    // the exact copies the launcher verified, not a web page.
+                    Label {
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                        visible: typeof tio !== "undefined" && !tio.packageValid
+                        text: typeof tio !== "undefined" ? tio.packageProblem : ""
+                        color: DesignTokens.mutedColor
+                        font.pixelSize: DesignTokens.fontSmall
+                    }
+
+                    Label {
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                        color: DesignTokens.mutedColor
+                        font.pixelSize: DesignTokens.fontSmall
+                        text: window.tr(
+                            "包里带的是上游 tio 与它真正导入的 MSYS2 运行时；每行给出来源、许可证和原文，点开可查。",
+                            "The package ships upstream tio plus the MSYS2 runtime it really imports; "
+                            + "each row links its source, licence and licence text for verification.")
+                    }
+
+                    // One row per component: name and version, where it came
+                    // from, the licence text that ships with it, and why it is
+                    // (or is not) inside the package.
+                    Repeater {
+                        model: typeof tio !== "undefined" ? tio.thirdParty : []
+
+                        delegate: ColumnLayout {
+                            required property var modelData
+                            Layout.fillWidth: true
+                            spacing: 3
+
+                            Rectangle {
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 1
+                                color: DesignTokens.borderColor
+                            }
+
+                            Flow {
+                                Layout.fillWidth: true
+                                spacing: 6
+
+                                Label {
+                                    text: modelData.name
+                                    color: DesignTokens.textColor
+                                    font.pixelSize: DesignTokens.fontCaption
+                                    font.weight: Font.DemiBold
+                                }
+                                Label {
+                                    text: modelData.version
+                                    color: DesignTokens.mutedColor
+                                    font.pixelSize: DesignTokens.fontSmall
+                                }
+                                Label {
+                                    text: modelData.license
+                                    color: DesignTokens.mutedColor
+                                    font.pixelSize: DesignTokens.fontSmall
+                                }
+                                Rectangle {
+                                    visible: !modelData.bundled
+                                    Layout.preferredWidth: notBundledLabel.implicitWidth + 12
+                                    Layout.preferredHeight: 16
+                                    radius: 8
+                                    color: "transparent"
+                                    border.width: 1
+                                    border.color: DesignTokens.warnColor
+                                    Label {
+                                        id: notBundledLabel
+                                        anchors.centerIn: parent
+                                        text: window.tr("不随包", "not bundled")
+                                        color: DesignTokens.warnColor
+                                        font.pixelSize: DesignTokens.fontSmall
+                                    }
+                                }
+                            }
+
+                            Flow {
+                                Layout.fillWidth: true
+                                spacing: 6
+
+                                Label {
+                                    text: window.tr("来源", "source") + ":"
+                                    color: DesignTokens.mutedColor
+                                    font.pixelSize: DesignTokens.fontSmall
+                                }
+                                LinkLabel {
+                                    text: modelData.sourceLabel
+                                    onClicked: if (typeof tio !== "undefined") tio.openWebLink(modelData.source)
+                                }
+                                LinkLabel {
+                                    visible: modelData.extra.length > 0
+                                    text: modelData.extraLabel
+                                    onClicked: if (typeof tio !== "undefined") tio.openWebLink(modelData.extra)
+                                }
+                            }
+
+                            Flow {
+                                Layout.fillWidth: true
+                                spacing: 6
+
+                                Label {
+                                    text: window.tr("许可证原文", "licence text") + ":"
+                                    color: DesignTokens.mutedColor
+                                    font.pixelSize: DesignTokens.fontSmall
+                                }
+                                Repeater {
+                                    model: modelData.licenseFiles
+                                    delegate: LinkLabel {
+                                        required property string modelData
+                                        text: modelData
+                                        // A licence text that ships with the
+                                        // package opens the exact copy the
+                                        // launcher verified.
+                                        onClicked: if (typeof tio !== "undefined")
+                                            tio.openPackageDoc(modelData)
+                                    }
+                                }
+                            }
+
+                            Label {
+                                Layout.fillWidth: true
+                                wrapMode: Text.WordWrap
+                                text: modelData.why
+                                color: DesignTokens.mutedColor
+                                font.pixelSize: DesignTokens.fontSmall
+                            }
+                        }
+                    }
+
+                    // The full documents are still one click away, but they are
+                    // the appendix now, not the only way to read the record.
                     RowLayout {
                         Layout.fillWidth: true
                         spacing: 8
+
                         Label {
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
                             color: DesignTokens.mutedColor
                             font.pixelSize: DesignTokens.fontSmall
-                            text: window.tr(
-                                "包里的三方文件：tio 与 MSYS2 运行时，来源与许可证逐文件可查。",
-                                "The package's third-party files: tio and the MSYS2 runtime, with per-file sources and licences.")
+                            text: window.tr("完整文档（随包）：第三方说明与逐文件清单。",
+                                            "Full documents (shipped with the package): the third-party notes and the per-file manifest.")
                         }
                         TokenButton {
                             text: window.tr("第三方说明", "Third-party notes")

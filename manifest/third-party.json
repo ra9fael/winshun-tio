@@ -1,0 +1,113 @@
+{
+  "_comment": "机器可读的第三方清单：与 THIRD_PARTY.md 逐行对应，窗口的「包完整性」卡按它渲染。licenses/ 是随包走的许可证原文，source 是可核验的上游地址。",
+  "components": [
+    {
+      "name": "tio",
+      "version": "3.9-3",
+      "license": "GPL-2.0-or-later",
+      "bundled": true,
+      "sourceLabel": "repo.msys2.org · tio-3.9-3-x86_64.pkg.tar.zst",
+      "source": "https://repo.msys2.org/msys/x86_64/tio-3.9-3-x86_64.pkg.tar.zst",
+      "extraLabel": "github.com/tio/tio (上游源码)",
+      "extra": "https://github.com/tio/tio",
+      "licenseFiles": ["licenses/tio.txt"],
+      "whyZh": "就是这个程序",
+      "whyEn": "the program itself"
+    },
+    {
+      "name": "msys-2.0.dll",
+      "version": "MSYS2 runtime",
+      "license": "GPL + Cygwin",
+      "bundled": true,
+      "sourceLabel": "repo.msys2.org · msys/x86_64/",
+      "source": "https://repo.msys2.org/msys/x86_64/",
+      "extraLabel": "",
+      "extra": "",
+      "licenseFiles": ["licenses/msys2-runtime-COPYING", "licenses/msys2-runtime-CYGWIN_LICENSE"],
+      "whyZh": "tio.exe 的 PE import：MSYS/POSIX 层本身",
+      "whyEn": "a PE import of tio.exe: the MSYS/POSIX layer itself"
+    },
+    {
+      "name": "msys-glib-2.0-0.dll · msys-iconv-2.dll · msys-pcre2-8-0.dll · msys-lua-5.5.dll · msys-intl-8.dll",
+      "version": "LGPL-2.1-or-later（随 MSYS2 分发）",
+      "license": "LGPL-2.1-or-later",
+      "bundled": true,
+      "sourceLabel": "repo.msys2.org · msys/x86_64/",
+      "source": "https://repo.msys2.org/msys/x86_64/",
+      "extraLabel": "",
+      "extra": "",
+      "licenseFiles": ["licenses/msys2-runtime-COPYING"],
+      "whyZh": "tio 及其运行库的 PE import（GLib/iconv/pcre2/lua/intl）",
+      "whyEn": "PE imports of tio and its runtime (GLib/iconv/pcre2/lua/intl)"
+    },
+    {
+      "name": "msys-gcc_s-seh-1.dll",
+      "version": "gcc-libs",
+      "license": "GPL-3+ · Runtime exception",
+      "bundled": true,
+      "sourceLabel": "repo.msys2.org · msys/x86_64/",
+      "source": "https://repo.msys2.org/msys/x86_64/",
+      "extraLabel": "",
+      "extra": "",
+      "licenseFiles": [
+        "licenses/gcc-libs-COPYING3",
+        "licenses/gcc-libs-COPYING.LIB",
+        "licenses/gcc-libs-RUNTIME.LIBRARY.EXCEPTION"
+      ],
+      "whyZh": "msys-2.0.dll 的 PE import（异常展开）",
+      "whyEn": "a PE import of msys-2.0.dll (exception unwinding)"
+    },
+    {
+      "name": "tio.exe (引导器) · TioApp.dll (窗口)",
+      "version": "0.1.0",
+      "license": "MIT",
+      "bundled": true,
+      "sourceLabel": "github.com/ra9fael/winshun-tio",
+      "source": "https://github.com/ra9fael/winshun-tio",
+      "extraLabel": "",
+      "extra": "",
+      "licenseFiles": ["LICENSE"],
+      "whyZh": "本插件的引导器与窗口",
+      "whyEn": "the launcher and the window of this plugin"
+    },
+    {
+      "name": "Windows Terminal",
+      "version": "机器已装为准",
+      "license": "MIT",
+      "bundled": false,
+      "sourceLabel": "github.com/microsoft/terminal",
+      "source": "https://github.com/microsoft/terminal",
+      "extraLabel": "",
+      "extra": "",
+      "licenseFiles": [],
+      "whyZh": "只调用机器上已装的，不把「本机存在」当成「可再分发」",
+      "whyEn": "only the machine's own install is called; \"installed here\" is never taken as \"redistributable\""
+    },
+    {
+      "name": "Qt 6.12 (Core/Gui/Qml/Quick/QuickControls2)",
+      "version": "6.12.0",
+      "license": "LGPL-3.0",
+      "bundled": false,
+      "sourceLabel": "download.qt.io",
+      "source": "https://download.qt.io/official_releases/qt/",
+      "extraLabel": "gnu.org · LGPL-3.0",
+      "extra": "https://www.gnu.org/licenses/lgpl-3.0.html",
+      "licenseFiles": [],
+      "whyZh": "用 Win顺 宿主的共享 Qt（qt: host），包内不混入另一版",
+      "whyEn": "the host's shared Qt is used (qt: host); no second Qt ships inside the package"
+    },
+    {
+      "name": "Phosphor 字体（图标字形）",
+      "version": "—",
+      "license": "MIT",
+      "bundled": false,
+      "sourceLabel": "github.com/ra9fael/winshun-plugin-icons",
+      "source": "https://github.com/ra9fael/winshun-plugin-icons",
+      "extraLabel": "",
+      "extra": "",
+      "licenseFiles": ["icons/PHOSPHOR-LICENSE"],
+      "whyZh": "图标字形来源；包里只有生成产物（app.ico、icons/app-*.png）",
+      "whyEn": "glyph source for the icons; only generated artefacts ship (app.ico, icons/app-*.png)"
+    }
+  ]
+}

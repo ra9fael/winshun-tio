@@ -6,6 +6,8 @@ Besides the plugin's own `tio.exe` (the starter) and `TioApp.dll` (the window), 
 
 `manifest/files.json` is the machine-readable copy; the launcher verifies every file against it before starting. This is the human-readable one.
 
+`manifest/third-party.json` is the machine-readable twin of this table: the window's "Package integrity" card renders it row by row (component, version, licence, source, where the licence text lives, why it is in the package), so the record can be read without opening a file. This file and that one must change together.
+
 ## tio and its runtime
 
 Source: `https://repo.msys2.org/msys/x86_64/tio-3.9-3-x86_64.pkg.tar.zst`

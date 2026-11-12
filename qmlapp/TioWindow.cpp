@@ -315,6 +315,58 @@ QString TioWindow::packageProblem() const
     return fromStd(package.problems.front());
 }
 
+QString TioWindow::packageSource() const
+{
+    return fromStd(core().controller().snapshot().package.sourceUrl);
+}
+
+QString TioWindow::packageLicense() const
+{
+    return fromStd(core().controller().snapshot().package.license);
+}
+
+int TioWindow::packageFileCount() const
+{
+    return core().controller().snapshot().package.fileCount;
+}
+
+// The runtime's size, in the unit a reader can judge: bytes below a megabyte,
+// megabytes above (one decimal).
+QString TioWindow::packageSize() const
+{
+    const unsigned long long bytes = core().controller().snapshot().package.totalBytes;
+    if (bytes < 1024ull * 1024ull)
+        return QString::number(bytes / 1024ull) + " KB";
+    const double mb = static_cast<double>(bytes) / (1024.0 * 1024.0);
+    return QString::number(mb, 'f', 1) + " MB";
+}
+
+// The third-party record: what each component is, where it came from, which
+// licence text ships with it and why it is (or is not) in the package.
+QVariantList TioWindow::thirdParty() const
+{
+    QVariantList out;
+    const VerifyResult package = core().controller().snapshot().package;
+    for (const ThirdParty& component : package.thirdParty) {
+        QVariantMap row;
+        row["name"] = fromStd(component.name);
+        row["version"] = fromStd(component.version);
+        row["license"] = fromStd(component.license);
+        row["bundled"] = component.bundled;
+        row["sourceLabel"] = fromStd(component.sourceLabel);
+        row["source"] = fromStd(component.source);
+        row["extraLabel"] = fromStd(component.extraLabel);
+        row["extra"] = fromStd(component.extra);
+        row["why"] = fromStd(zh() ? component.whyZh : component.whyEn);
+        QStringList files;
+        for (const std::string& file : component.licenseFiles)
+            files << fromStd(file);
+        row["licenseFiles"] = files;
+        out << row;
+    }
+    return out;
+}
+
 bool TioWindow::canLaunch() const
 {
     // The readiness snapshot is the focused tab's: its gates, its Launch button.
@@ -570,6 +622,16 @@ void TioWindow::openPackageDoc(const QString& name)
     const std::wstring dir = core().controller().pluginDir();
     const QUrl url = QUrl::fromLocalFile(
         QDir::fromNativeSeparators(QString::fromStdWString(dir)) + "/" + name);
+    QDesktopServices::openUrl(url);
+}
+
+// A web link from the third-party record: the upstream the component came
+// from. Only http(s) opens — nothing else is turned into a URL.
+void TioWindow::openWebLink(const QString& link)
+{
+    const QUrl url(link);
+    if (!url.isValid() || (url.scheme() != "http" && url.scheme() != "https"))
+        return;
     QDesktopServices::openUrl(url);
 }
 

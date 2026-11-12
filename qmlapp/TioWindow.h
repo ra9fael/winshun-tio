@@ -66,6 +66,15 @@ class TioWindow : public QObject {
     Q_PROPERTY(QString packageVersion READ packageVersion NOTIFY changed)
     Q_PROPERTY(bool packageValid READ packageValid NOTIFY changed)
     Q_PROPERTY(QString packageProblem READ packageProblem NOTIFY changed)
+    // The package's own facts for the integrity card: the upstream it came
+    // from, its licence, the runtime file count and their size.
+    Q_PROPERTY(QString packageSource READ packageSource NOTIFY changed)
+    Q_PROPERTY(QString packageLicense READ packageLicense NOTIFY changed)
+    Q_PROPERTY(int packageFileCount READ packageFileCount NOTIFY changed)
+    Q_PROPERTY(QString packageSize READ packageSize NOTIFY changed)
+    // The third-party record, one entry per component, in the order the
+    // manifest lists them.
+    Q_PROPERTY(QVariantList thirdParty READ thirdParty NOTIFY changed)
 
     Q_PROPERTY(bool canLaunch READ canLaunch NOTIFY changed)
     Q_PROPERTY(QString blockedReason READ blockedReason NOTIFY changed)
@@ -124,6 +133,11 @@ public:
     QString packageVersion() const;
     bool packageValid() const;
     QString packageProblem() const;
+    QString packageSource() const;
+    QString packageLicense() const;
+    int packageFileCount() const;
+    QString packageSize() const;
+    QVariantList thirdParty() const;
 
     bool canLaunch() const;
     QString blockedReason() const;
@@ -163,6 +177,8 @@ public:
     // Opens a document that ships in the package folder ("THIRD_PARTY.md",
     // "manifest/files.json"): the integrity card's verifiable links.
     Q_INVOKABLE void openPackageDoc(const QString& name);
+    // Opens an upstream http(s) link from the third-party record.
+    Q_INVOKABLE void openWebLink(const QString& link);
 
     // ---- card folding (TIO-008) ----
     Q_INVOKABLE bool cardCollapsed(const QString& id, bool fallback = false) const;

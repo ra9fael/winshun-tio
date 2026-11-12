@@ -75,6 +75,7 @@ set(tio_qml
   qmlapp/qml/GroupCard.qml
   qmlapp/qml/FieldRow.qml
   qmlapp/qml/DetailLine.qml
+  qmlapp/qml/LinkLabel.qml
   qmlapp/qml/TokenComboBox.qml
   qmlapp/qml/TokenSegmented.qml
   qmlapp/qml/TokenButton.qml)

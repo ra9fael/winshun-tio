@@ -526,11 +526,36 @@ inline bool isPe64(const std::wstring& path, bool& is64, std::string& problem)
 
 // ---- package verification (TIO-002/003) -----------------------------------------
 
+// One third-party component: what it is, where it came from, which licence
+// text ships with it and why it is (or is not) inside the package. The machine
+// readable twin of THIRD_PARTY.md, read from manifest/third-party.json.
+struct ThirdParty {
+    std::string name;
+    std::string version;
+    std::string license;
+    bool bundled = false;
+    std::string sourceLabel;
+    std::string source;
+    std::string extraLabel;
+    std::string extra;
+    std::vector<std::string> licenseFiles; // inside the package
+    std::string whyZh;
+    std::string whyEn;
+};
+
 struct VerifyResult {
     bool ok = false;
     int checked = 0;
     std::vector<std::string> problems; // UTF-8, one per failed file
     std::string packageVersion;        // from manifest/package.json, for the form
+    // What the package carries, for the integrity card: the upstream it came
+    // from, its licence, how many runtime files and how big they are.
+    std::string sourceUrl;
+    std::string sourceSha256;
+    std::string license;
+    int fileCount = 0;
+    unsigned long long totalBytes = 0;
+    std::vector<ThirdParty> thirdParty;
 };
 
 namespace detail {
@@ -539,6 +564,7 @@ namespace detail {
 struct Entry {
     std::string path;
     std::string sha256;
+    unsigned long long bytes = 0;
 };
 
 inline std::vector<Entry> readManifest(const std::wstring& pluginDir, std::string& version,
@@ -573,6 +599,7 @@ inline std::vector<Entry> readManifest(const std::wstring& pluginDir, std::strin
         Entry entry;
         entry.path = item["path"].toString();
         entry.sha256 = item["sha256"].toString();
+        entry.bytes = static_cast<unsigned long long>(item["bytes"].toInt(0));
         std::transform(entry.sha256.begin(), entry.sha256.end(), entry.sha256.begin(),
             [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
         if (!entry.path.empty() && !entry.sha256.empty())
@@ -581,6 +608,61 @@ inline std::vector<Entry> readManifest(const std::wstring& pluginDir, std::strin
     if (entries.empty())
         problem = "manifest/files.json lists no files";
     return entries;
+}
+
+// Reads a JSON file from the plugin folder into text. Empty when it is absent
+// or unreadable: the caller decides whether that is a problem.
+inline std::string readPluginFile(const std::wstring& pluginDir, const wchar_t* relative)
+{
+    const std::wstring file = joinPath(pluginDir, relative);
+    if (!fileExists(file))
+        return {};
+    HANDLE handle = ::CreateFileW(file.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
+        OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (handle == INVALID_HANDLE_VALUE)
+        return {};
+    std::string text;
+    char buffer[8192];
+    DWORD read = 0;
+    while (::ReadFile(handle, buffer, sizeof buffer, &read, nullptr) && read > 0)
+        text.append(buffer, read);
+    ::CloseHandle(handle);
+    return text;
+}
+
+// The third-party record, read from the machine readable twin of
+// THIRD_PARTY.md. A missing or broken file yields no components: the window
+// then shows the package's own files and says the record is unavailable, rather
+// than inventing one.
+inline std::vector<ThirdParty> readThirdParty(const std::wstring& pluginDir)
+{
+    std::vector<ThirdParty> components;
+    std::string problem;
+    const std::string text = readPluginFile(pluginDir, L"manifest\\third-party.json");
+    if (text.empty())
+        return components;
+    const auto parsed = winshun::Json::parse(text, &problem);
+    if (!parsed || !parsed->isObject())
+        return components;
+    for (const winshun::Json& item : (*parsed)["components"].toArray()) {
+        ThirdParty component;
+        component.name = item["name"].toString();
+        component.version = item["version"].toString();
+        component.license = item["license"].toString();
+        component.bundled = item["bundled"].toBool(false);
+        component.sourceLabel = item["sourceLabel"].toString();
+        component.source = item["source"].toString();
+        component.extraLabel = item["extraLabel"].toString();
+        component.extra = item["extra"].toString();
+        for (const winshun::Json& file : item["licenseFiles"].toArray())
+            if (file.isString())
+                component.licenseFiles.push_back(file.toString());
+        component.whyZh = item["whyZh"].toString();
+        component.whyEn = item["whyEn"].toString();
+        if (!component.name.empty())
+            components.push_back(std::move(component));
+    }
+    return components;
 }
 
 } // namespace detail
@@ -598,6 +680,23 @@ inline VerifyResult verifyPackage(const std::wstring& pluginDir)
         result.problems.push_back(problem.empty() ? "manifest unreadable" : problem);
         return result;
     }
+    // What the package carries, for the integrity card: the upstream it came
+    // from, its licence, the runtime file count and their size.
+    {
+        std::string text;
+        std::string readProblem;
+        const std::string manifestText = detail::readPluginFile(pluginDir, L"manifest\\files.json");
+        if (const auto parsed = winshun::Json::parse(manifestText, &readProblem)) {
+            result.sourceUrl = (*parsed)["source"].toString();
+            result.sourceSha256 = (*parsed)["sourceSha256"].toString();
+            result.license = (*parsed)["license"].toString();
+        }
+    }
+    result.fileCount = static_cast<int>(entries.size());
+    for (const detail::Entry& entry : entries)
+        result.totalBytes += entry.bytes;
+    result.thirdParty = detail::readThirdParty(pluginDir);
+
     for (const detail::Entry& entry : entries) {
         const std::wstring path = joinPath(pluginDir, wide(entry.path));
         if (!fileExists(path)) {

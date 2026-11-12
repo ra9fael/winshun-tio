@@ -83,6 +83,68 @@ int main(int argc, char** argv)
     report(package.ok, "package verifies", package.problems.empty() ? "" : package.problems.front());
     report(package.checked >= 8, "package lists every runtime file",
         "checked " + std::to_string(package.checked));
+    report(package.fileCount == package.checked, "the manifest file count matches what was checked",
+        "count " + std::to_string(package.fileCount) + " checked " + std::to_string(package.checked));
+    report(package.totalBytes > 0, "the manifest records the runtime size",
+        "bytes " + std::to_string(package.totalBytes));
+    report(!package.sourceUrl.empty() && package.sourceUrl.rfind("https://", 0) == 0,
+        "the manifest records where the runtime came from", package.sourceUrl);
+    report(!package.license.empty(), "the manifest records the runtime licence", package.license);
+
+    // 1b. The third-party record travels with the package: every component
+    //     names a source, and the licence texts it points at exist on disk.
+    report(!package.thirdParty.empty(), "the third-party record ships with the package",
+        "components " + std::to_string(package.thirdParty.size()));
+    {
+        bool allSourced = true;
+        bool allLicencesPresent = true;
+        std::string why;
+        for (const tioplug::ThirdParty& component : package.thirdParty) {
+            if (component.source.empty() || component.source.rfind("https://", 0) != 0) {
+                allSourced = false;
+                why = component.name;
+                break;
+            }
+            for (const std::string& file : component.licenseFiles) {
+                if (!tioplug::fileExists(pluginDir + L"\\" + winshun::wide(file))) {
+                    allLicencesPresent = false;
+                    why = file;
+                    break;
+                }
+            }
+            if (!allLicencesPresent)
+                break;
+        }
+        report(allSourced, "every component names an https source", why);
+        report(allLicencesPresent, "every licence text it links to is in the package", why);
+    }
+
+    // 1c. The machine-readable record and the human-readable one must agree:
+    //     every component the window shows is named in THIRD_PARTY.md, and the
+    //     document is in the package too.
+    {
+        const std::string document = tioplug::detail::readPluginFile(pluginDir, L"THIRD_PARTY.md");
+        report(!document.empty(), "THIRD_PARTY.md ships with the package");
+        bool allNamed = true;
+        std::string why;
+        for (const tioplug::ThirdParty& component : package.thirdParty) {
+            // A component is identified by its first token: the file or the
+            // product name. The rest of the line is the display name, which
+            // the document words its own way.
+            std::string name = component.name;
+            for (const char* cut : {" · ", " (", "（", " "}) {
+                const size_t at = name.find(cut);
+                if (at != std::string::npos)
+                    name = name.substr(0, at);
+            }
+            if (name.empty() || document.find(name) == std::string::npos) {
+                allNamed = false;
+                why = name;
+                break;
+            }
+        }
+        report(allNamed, "every component in the record is named in THIRD_PARTY.md", why);
+    }
 
     // 2. Backend detection finds what this machine actually has.
     const tioplug::Backends found = tioplug::probeBackends();
