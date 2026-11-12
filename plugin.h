@@ -120,6 +120,29 @@ protected:
             return {replace(rows())};
         }
 
+        // ---- one row per port: launch that port, stop that port ----
+        // The port is in the item id ("port:<com>"), so the row decides which
+        // port starts; the box's own configuration only supplies parameters.
+        if (id == "launchPort" || id == "stopPort") {
+            const std::string target = request.item["id"].toString();
+            const std::size_t colon = target.find(':');
+            const int com = colon == std::string::npos ? 0 : std::atoi(target.c_str() + colon + 1);
+            m_browse = Browse::None;
+            if (id == "stopPort") {
+                if (com > 0)
+                    controller.stopPort(com);
+                return {replace(rows())};
+            }
+            if (com <= 0)
+                return {notify(L"这一行没有端口", "This row names no port")};
+            Form form = controller.form();
+            form.port = L"COM" + winshun::wide(std::to_string(com));
+            std::string error;
+            if (!controller.launch(form, error))
+                return {winshun::effect::notify(describe(error)), replace(rows())};
+            return {replace(rows())};
+        }
+
         // ---- the standalone window ----
         if (id == "openWindow") {
             if (!windowAvailable())

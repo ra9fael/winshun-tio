@@ -2,7 +2,7 @@
 
 Opens a serial terminal with [tio](https://github.com/tio/tio) bundled inside the plugin package. **Set the parameters and launch from the search box**, or open a standalone window to configure it.
 
-Current version: **v0.1.1**.
+Current version: **v0.1.2**.
 
 ## Interactive online demo (no install)
 
@@ -32,9 +32,11 @@ The first enable asks for `processes` (start the terminal) and `ui` (show the wi
 Type `tio` and Enter to enter the command; it answers with a group of rows:
 
 ```text
-Launch
+Launch (one row per serial port)
   ⏻  tio COM8
      COM8 → /dev/ttyS7 · 115200 8n1 · none · Windows Terminal
+  ⏻  tio COM9
+     COM9 → /dev/ttyS8 · 115200 8n1 · none · Windows Terminal
 Parameters (Enter edits in place)
   ⌁  Port        COM8
   ⌁  Baud rate   115200
@@ -50,10 +52,12 @@ Information
 
 | Row | What Enter does |
 |---|---|
-| Launch row | Starts tio once the six checks pass; while running, Enter stops the session this plugin started |
+| Launch row (one per port) | Starts tio on **that row's own port** once the six checks pass; if that port is running, Enter stops that session |
 | Port / baud rate / backend | Replaces the list in place, Esc goes back, the current value is ticked |
 | Data bits / parity / stop bits / flow | Cycles to the next value in place |
 | Diagnostics | **Expands a diagnostics view**: the report is shown line by line in the list, Back/Esc returns; `Shift+Enter` copies the whole report |
+
+The port is no longer buried among the parameters: every enumerated serial port gets its own launch row, so Enter starts that port directly instead of going through the Port sub-list first. A row carries only its port; baud rate, parity and backend still come from the current parameters.
 
 A change is written to disk at once: the search box has nowhere to put a Save button. Launching saves first too, so what runs is what the next query shows. The plugin.json settings page only supplies **defaults** — a key is taken from it only while 	io.json has never recorded one, so a value edited here wins.
 

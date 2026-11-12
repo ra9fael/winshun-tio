@@ -142,7 +142,8 @@ def main() -> int:
             items = (answer.get("result") or {}).get("items") or []
             ids = [item.get("id") for item in items]
             check(len(items) >= 11, "the grouped rows arrive", str(len(items)))
-            check("launch" in ids, "the launch row is there")
+            launches = [i for i in ids if str(i).startswith("port:")]
+            check(bool(launches), "every enumerated port has its own row", str(launches))
             check("port" in ids and "backend" in ids, "the parameter rows are there")
 
             # A replace round trip, without launching anything.
@@ -173,7 +174,8 @@ def main() -> int:
             started = time.monotonic()
             opened = plugin.call("action", {
                 "command": "tio", "action": "openWindow", "text": "",
-                "item": {"id": "launch"}, "trigger": "keyword", "files": []}, 5)
+                "item": {"id": launches[0] if launches else "launch"}, "trigger": "keyword",
+                "files": []}, 5)
             elapsed = time.monotonic() - started
             effects = (opened.get("result") or {}).get("effects") or []
             notices = [e.get("text", "") for e in effects if e.get("type") == "notify"]

@@ -7,6 +7,7 @@
 #include "controller.h"
 #include "rows.h"
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -64,55 +65,89 @@ inline std::vector<Row> buildRows(const Snapshot& s, Browse browse, const Lang& 
     }
 
     // ---- the main list ----
-    // The launch row shows the default configuration: launching it binds a tab
-    // (or reuses the idle one) for that port. A session already running the
-    // default port is what the row then stops; other sessions keep running.
-    const SessionView* bound = nullptr;
-    for (const SessionView& view : s.sessions)
-        if (s.port.ok() && view.form.parsed().com == s.port.com)
-            bound = &view;
-    const bool active = bound && (bound->session.active()
-        || bound->session.phase == Phase::Validating);
-    const bool ready = s.defaultReadiness.ready();
-
+    // One row per serial port. The port is the choice a launch really makes, so
+    // a machine with two devices offers two rows instead of one row pinned to
+    // whatever the configuration happens to hold.
     rows.push_back(groupRow("launch", lang.groupLaunch));
 
-    Row main;
-    main.id = "launch";
-    main.icon = active ? "glyph:U+E71A" : "glyph:U+E768";
-    main.title = s.port.ok() ? "tio COM" + std::to_string(s.port.com) : std::string("tio");
-    if (s.port.ok()) {
-        main.subtitle = "COM" + std::to_string(s.port.com) + lang.arrow + s.port.device()
+    std::vector<int> ports;
+    for (const PortInfo& info : s.ports)
+        ports.push_back(info.com);
+    // A snapshot without an enumerated port list (a headless check, a machine
+    // where enumeration failed) still offers the configured port.
+    if (ports.empty() && s.port.ok())
+        ports.push_back(s.port.com);
+
+    if (ports.empty()) {
+        Row none;
+        none.id = "launch";
+        none.icon = "glyph:U+E768";
+        none.title = "tio";
+        none.subtitle = lang.noPorts;
+        none.disabled = true;
+        none.score = 100;
+        rows.push_back(std::move(none));
+    }
+
+    // The gates no other port can fix: a broken package, an unusable parameter
+    // set, no terminal backend. Port-specific gates (port, portBusy, identity)
+    // belong to one port, so the launch attempt names them in the toast.
+    Readiness shared;
+    for (const Gate gate : s.defaultReadiness.blocking) {
+        if (gate != Gate::Port && gate != Gate::PortBusy && gate != Gate::Identity)
+            shared.blocking.push_back(gate);
+    }
+
+    for (const int com : ports) {
+        const SessionView* view = nullptr;
+        for (const SessionView& candidate : s.sessions) {
+            if (candidate.form.parsed().com == com)
+                view = &candidate;
+        }
+        const bool active = view && (view->session.active()
+            || view->session.phase == Phase::Validating);
+
+        Row row;
+        row.id = "port:" + std::to_string(com);
+        row.icon = active ? "glyph:U+E71A" : "glyph:U+E768";
+        row.title = "tio COM" + std::to_string(com);
+        row.subtitle = "COM" + std::to_string(com) + lang.arrow + Port::devicePath(com - 1)
             + lang.separator + serialText(s.serial) + lang.separator
             + backendLabel(s.backend, lang);
+        // A running session is what the row stops; the port only changes when
+        // the row starts it.
+        row.action = active ? "stopPort" : "launchPort";
+        row.actionKey = "Enter";
+        // The standalone window, on the row's menu (Ctrl+Enter): the second way
+        // in, visible on the row the user is already on.
+        row.moreActions.emplace_back("openWindow", "Ctrl+Enter");
+        row.score = 100;
+        if (active) {
+            // A running session says so, and says the port state exactly as
+            // recorded: a started process is not a connected port (TIO-007).
+            const char* phase = lang.running;
+            if (view->session.phase == Phase::Starting)
+                phase = lang.starting;
+            else if (view->session.phase == Phase::Stopping)
+                phase = lang.stopping;
+            row.subtitle = std::string(phase) + lang.separator + row.subtitle;
+        } else if (!shared.ready()) {
+            // Name what is missing rather than leaving a dead row.
+            row.subtitle = std::string(lang.blocked) + ": " + gateText(shared, lang);
+            row.disabled = true;
+        }
+        rows.push_back(std::move(row));
     }
-    main.action = active ? "stop" : "launch";
-    main.actionKey = "Enter";
-    // The standalone window, on the row's menu (Ctrl+Enter): the second way in,
-    // visible on the row the user is already on.
-    main.moreActions.emplace_back("openWindow", "Ctrl+Enter");
-    main.disabled = !active && !ready;
-    main.score = 100;
-    if (active) {
-        // A running session says so, and says the port state exactly as recorded:
-        // a started process is not a connected port (TIO-007).
-        const char* phase = lang.running;
-        if (bound->session.phase == Phase::Starting)
-            phase = lang.starting;
-        else if (bound->session.phase == Phase::Stopping)
-            phase = lang.stopping;
-        main.subtitle = std::string(phase) + lang.separator + main.subtitle;
-    } else if (!ready) {
-        // Name what is missing rather than leaving a dead row.
-        main.subtitle = std::string(lang.blocked) + ": " + gateText(s.defaultReadiness, lang);
-    }
-    rows.push_back(std::move(main));
 
     // Every session the window opened gets its own row: the search box stays
     // honest about processes that are out there while the user works here.
     bool anyOther = false;
     for (const SessionView& view : s.sessions) {
-        if (&view == bound || (!view.session.active()
+        // A session on a listed port is already that port's row: it must not
+        // appear twice, once to start and once to stop.
+        const int com = view.form.parsed().com;
+        const bool listedAbove = std::find(ports.begin(), ports.end(), com) != ports.end();
+        if (listedAbove || (!view.session.active()
             && view.session.phase != Phase::Validating))
             continue;
         if (!anyOther) {

@@ -161,6 +161,23 @@ def find(items: list[dict], item_id: str) -> dict:
     return {}
 
 
+def launch_row(items: list[dict]) -> dict:
+    """The first per-port launch row: the main list has one row per port."""
+    for item in items:
+        if not str(item.get("id", "")).startswith("port:"):
+            continue
+        actions = item.get("actions") or [{}]
+        if actions[0].get("id") in ("launchPort", "stopPort"):
+            return item
+    return {}
+
+
+def launch_rows(items: list[dict]) -> list[dict]:
+    return [item for item in items
+            if str(item.get("id", "")).startswith("port:")
+            and (item.get("actions") or [{}])[0].get("id") in ("launchPort", "stopPort")]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--launch", action="store_true",
@@ -183,12 +200,15 @@ def main() -> int:
             items = plugin.query()
             ids = [i.get("id") for i in items]
             check(len(items) >= 11, "the answer carries the grouped rows", str(len(items)))
-            check(ids.count("launch") == 1, "exactly one launch row")
+            check(len(launch_rows(items)) >= 1, "every enumerated port has a launch row",
+                  str(len(launch_rows(items))))
+            check(len({i.get("id") for i in launch_rows(items)}) == len(launch_rows(items)),
+                  "the launch rows have distinct ids")
             for wanted in ("port", "baud", "dataBits", "parity", "stopBits", "flow", "backend",
                            "control", "diagnostics"):
                 check(wanted in ids, f"the {wanted} row is present")
 
-            launch = find(items, "launch")
+            launch = launch_row(items)
             check(launch.get("title", "").startswith("tio"), "the launch row names tio",
                   launch.get("title", ""))
             # A row that cannot start says why instead of going quietly dead.
@@ -226,7 +246,7 @@ def main() -> int:
                       "a port row shows the ttyS mapping", row.get("subtitle") or "")
 
             back = replaced(plugin.action("back", {"id": "back"}, 12))
-            check(find(back, "launch").get("id") == "launch", "back returns the main list")
+            check(bool(launch_row(back)), "back returns the main list")
 
             bauds = replaced(plugin.action("openBaudrates", find(items, "baud"), 13))
             check(len([i for i in bauds if str(i.get("id", "")).startswith("baud:")]) >= 5,
@@ -243,7 +263,7 @@ def main() -> int:
                 if (data_dir / "tio.json").is_file() else {}
             if wt.get("valid") is not False:
                 chosen = replaced(plugin.action("backend", wt, 15))
-                check(find(chosen, "launch").get("id") == "launch", "choosing a backend returns the main list")
+                check(bool(launch_row(chosen)), "choosing a backend returns the main list")
                 saved = json.loads((data_dir / "tio.json").read_text(encoding="utf-8"))
                 check(saved.get("backend") == "wt", "the backend choice is written", str(saved.get("backend")))
             else:
@@ -291,7 +311,7 @@ def main() -> int:
 
             # Back returns to the main list.
             back = replaced(plugin.action("back", {"id": "back"}, 33))
-            check(find(back, "launch").get("id") == "launch", "back returns the main list")
+            check(bool(launch_row(back)), "back returns the main list")
 
             details = plugin.call("details", {"item": find(items, "control"), "text": ""}, 34)
             text = (details.get("result") or {}).get("text") or ""
@@ -305,7 +325,7 @@ def main() -> int:
             plugin.send({"jsonrpc": "2.0", "method": "appearance",
                          "params": {"locale": "en", "theme": "dark", "corners": "square"}})
             english = plugin.query(40)
-            check(find(english, "launch").get("title", "").startswith("tio"),
+            check(launch_row(english).get("title", "").startswith("tio"),
                   "the launch row survives a language change")
             check(find(english, "port").get("title") == "Port", "the port row is localized",
                   find(english, "port").get("title", ""))
@@ -318,16 +338,16 @@ def main() -> int:
 
             # ---- the real thing: launch, the running row, stop ----
             if args.launch:
-                ready = find(plugin.query(70), "launch")
+                ready = launch_row(plugin.query(70))
                 if ready.get("valid") is False:
                     # No port, no backend or a broken package: the row says which,
                     # and launching is the one thing that must not be faked.
                     print(f"SKIP no launch on this machine: {ready.get('subtitle', '')}")
                 else:
-                    started = plugin.action("launch", ready, 71)
+                    started = plugin.action("launchPort", ready, 71)
                     replaced_rows = replaced(started)
-                    running = find(replaced_rows, "launch")
-                    check((running.get("actions") or [{}])[0].get("id") == "stop",
+                    running = launch_row(replaced_rows)
+                    check((running.get("actions") or [{}])[0].get("id") == "stopPort",
                           "a started session offers Stop on the same row",
                           str(running.get("actions")))
                     check("Running" in (running.get("subtitle") or "")
@@ -345,9 +365,9 @@ def main() -> int:
                           str(saved.get("packageVersion")))
 
                     time.sleep(1)
-                    stopped = plugin.action("stop", running, 72)
-                    after = find(replaced(stopped), "launch")
-                    check((after.get("actions") or [{}])[0].get("id") == "launch",
+                    stopped = plugin.action("stopPort", running, 72)
+                    after = launch_row(replaced(stopped))
+                    check((after.get("actions") or [{}])[0].get("id") == "launchPort",
                           "after Stop the row offers Launch again",
                           str(after.get("actions")))
 
@@ -394,8 +414,9 @@ def main() -> int:
         try:
             init = plugin.initialize()
             check("result" in init, "the plugin starts with an existing data folder")
-            restored = find(plugin.query(60), "launch")
-            check(restored.get("id") == "launch", "the second run answers the same rows")
+            restored = launch_row(plugin.query(60))
+            check(str(restored.get("id", "")).startswith("port:"),
+                  "the second run answers the same rows", str(restored.get("id")))
         finally:
             plugin.close()
 
@@ -409,7 +430,7 @@ def main() -> int:
             # the case the seeding must handle too.
             plugin.initialize(settings={"baudrate": 9600, "dataBits": "7", "parity": "even",
                                         "backend": "conhost"})
-            seeded = find(plugin.query(61), "launch")
+            seeded = launch_row(plugin.query(61))
             check("9600" in (seeded.get("subtitle") or ""),
                   "the host's settings seed a fresh configuration", seeded.get("subtitle", ""))
             check("7e1" in (seeded.get("subtitle") or ""),
@@ -423,7 +444,7 @@ def main() -> int:
                          "params": {"settings": {"baudrate": 300, "parity": "odd"}}})
             plugin.send({"jsonrpc": "2.0", "method": "appearance",
                          "params": {"locale": "zh", "theme": "light"}})
-            after = find(plugin.query(66), "launch")
+            after = launch_row(plugin.query(66))
             check("300" not in (after.get("subtitle") or ""),
                   "a settings change does not reset the saved baud rate",
                   after.get("subtitle", ""))

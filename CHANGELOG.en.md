@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.1.2] - 2026-11-12
+
+### Fixes (clone, capture wording, search-box ports)
+
+- **Clone no longer hangs**: the button read `tio.sessions` and then looped over it to find the focused tab — that is a **live model**, and every clone grew its `length`, so the loop never ended and cloned until memory ran out (measured: 18.9 GB, then a crash). The button now calls `cloneFocusedSession()`, which takes the index from one snapshot in C++, so QML never iterates a list that its own body grows. The other, read-only walks of `tio.sessions` are unchanged.
+- **The capture state stops misleading**: capture is a launch argument, but a session started *before* capture was switched on still showed "on · records after launch", so it looked like it was recording. There is now a fourth state, "this run is not recorded", which says that stopping and launching again is what starts recording, and the box's placeholder says "no log for this run" too.
+- **The search box has one row per serial port**: the main list used to carry a **single** launch row pinned to the configured port; now every enumerated port gets its own `tio COM8` / `tio COM9` row, Enter launches with that row's own port, and a row whose port is already running becomes Stop. The Port sub-list under Parameters stays for changing the default configuration. Port-specific gates (no port, port busy, unknown identity) are reported by the launch attempt; only gates no port can fix (package, parameters, backend) are written on every row and disable it.
+- **Window checks no longer pop windows**: `tests/window_check.py` passes `--no-show` by default (the window is built, laid out and bound exactly as before, it just never appears); `--shown` opens a visible window. Nobody working at the machine gets interrupted by a test window. The window also has two test hooks: `tio.exe --window --no-show` (build without showing) and `--auto <plus|clone|close|capture>` (run one action and quit, writing progress to `TIO_TRACE_FILE` when it is set); ordinary launches are unaffected.
+
 ## [0.1.1] - 2026-11-12
 
 ### Crash fix (new session, start capture)
@@ -8,8 +17,6 @@
 - **Reproduced**: the same `tio.exe` inside a 128 MB job object died on the 5th "+"; with the ceiling at 512 MB it took 10 clicks and peaked around 133 MB. The standalone window uses no job object, which is why `tio.exe --window` never crashed — only the copy installed in WinShun.
 - **Fixed** by raising `runtime.memoryMB` to 512 (the host default, ~4x headroom). The native probe now fails when `plugin.json` asks for less than 256 MB, so the ceiling cannot quietly come back down.
 - The plugin description was corrected too: the window can now turn capture on (tio writes its own local log, the plugin only reads it), so "the plugin never reads, renders or logs serial content" no longer held.
-
-## [Unreleased]
 
 ### Standalone window overhaul
 

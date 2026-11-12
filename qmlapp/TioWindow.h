@@ -175,6 +175,10 @@ public:
     Q_INVOKABLE bool newSession();
     // Duplicates a tab's parameters into a new tab with no port.
     Q_INVOKABLE bool cloneSession(int index);
+    // The same for the focused tab. The tab strip calls this, not a QML loop
+    // over tio.sessions: that list is a live view of the model, so a clone
+    // inside the loop grows the very list being walked and never ends.
+    Q_INVOKABLE bool cloneFocusedSession();
     // Refused while the tab's session runs: the tab is the only handle to it.
     Q_INVOKABLE bool closeSession(int index);
     Q_INVOKABLE void restart();
@@ -186,6 +190,8 @@ public:
     // The tail of the log tio wrote, as text (log-strip already removed escapes).
     Q_INVOKABLE QString captureTail(int maxBytes = 32768) const;
     Q_INVOKABLE void copyCapture();
+    // A diagnostic line for a headless run (--auto); stderr, unbuffered.
+    Q_INVOKABLE void trace(const QString& text);
     Q_INVOKABLE bool saveCapture();
 
     // ---- editing ----

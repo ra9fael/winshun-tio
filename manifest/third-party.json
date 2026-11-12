@@ -59,7 +59,7 @@
     },
     {
       "name": "tio.exe (引导器) · TioApp.dll (窗口)",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "license": "MIT",
       "bundled": true,
       "sourceLabel": "github.com/ra9fael/winshun-tio",

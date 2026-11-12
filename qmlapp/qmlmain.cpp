@@ -43,6 +43,13 @@ bool g_testDetailsOpen = false;
 // --ports-open: the port dropdown starts open, so a screenshot can check the
 // entry layout (two lines per entry) without driving the mouse.
 bool g_testPortsOpen = false;
+// --no-show: the window is built and laid out but never shown, so a run for a
+// screenshot or a repro leaves the desktop alone. It still has no native frame,
+// which is why --auto drives the QML directly instead of the mouse.
+bool g_testHidden = false;
+// --auto <action>: the window performs one action as its button would, from a
+// timer on the GUI thread. Used to reproduce a click without a visible mouse.
+QString g_testAutoAction;
 
 QString appDirectory()
 {
@@ -135,6 +142,7 @@ bool openWindow(QString& error)
     // A screenshot of the port dropdown: the QML opens the popup on start when
     // this context property is true (absent in a normal run, so nothing opens).
     g_engine->rootContext()->setContextProperty(u"openPortListOnStart"_s, g_testPortsOpen);
+    g_engine->rootContext()->setContextProperty(u"testAutoAction"_s, g_testAutoAction);
     if (g_engine->rootObjects().isEmpty()) {
         QObject::connect(g_engine, &QQmlApplicationEngine::warnings, g_engine,
             [](const QList<QQmlError>& warnings) {
@@ -151,6 +159,12 @@ bool openWindow(QString& error)
     if (!window) {
         error = u"the window's root is not a window"_s;
         return false;
+    }
+    if (g_testHidden) {
+        // Laid out at the window's own size, never shown: nothing appears on the
+        // desktop, and the QML still builds every delegate and runs the layout.
+        window->resize(780, 720);
+        return true;
     }
     window->show();
     window->raise();
@@ -223,6 +237,10 @@ extern "C" __declspec(dllexport) int winshunTioWindow(const wchar_t* appDirName)
                 g_testDetailsOpen = true;
             if (arg == L"--ports-open")
                 g_testPortsOpen = true;
+            if (arg == L"--no-show")
+                g_testHidden = true;
+            if (arg == L"--auto" && i + 1 < count)
+                g_testAutoAction = QString::fromWCharArray(wide[i + 1]);
             if (arg == L"--data-dir" && i + 1 < count)
                 dataDir = wide[i + 1];
         }

@@ -520,6 +520,24 @@ bool TioWindow::cloneSession(int index)
     return true;
 }
 
+bool TioWindow::cloneFocusedSession()
+{
+    // Which tab is focused, resolved here: a QML loop over tio.sessions is a
+    // live view, and the clone it performs changes the list mid-walk.
+    const Snapshot snapshot = core().controller().snapshot();
+    int focused = -1;
+    for (std::size_t i = 0; i < snapshot.sessions.size(); ++i)
+        if (snapshot.sessions[i].focused) {
+            focused = static_cast<int>(i);
+            break;
+        }
+    if (focused < 0) {
+        emit notice(zh() ? "没有可以克隆的会话" : "there is no session to clone");
+        return false;
+    }
+    return cloneSession(focused);
+}
+
 bool TioWindow::closeSession(int index)
 {
     std::string error;
@@ -585,6 +603,21 @@ QString TioWindow::captureTail(int maxBytes) const
     if (maxBytes <= 0)
         maxBytes = 32768;
     return fromStd(core().controller().captureText(static_cast<std::size_t>(maxBytes)));
+}
+
+void TioWindow::trace(const QString& text)
+{
+    // A redirected stderr is not always what it claims on this host: a headless
+    // run writes to TIO_TRACE_FILE when it is set.
+    if (const char* path = std::getenv("TIO_TRACE_FILE")) {
+        if (std::FILE* file = std::fopen(path, "ab")) {
+            std::fprintf(file, "trace %s\n", qUtf8Printable(text));
+            std::fclose(file);
+        }
+        return;
+    }
+    std::fprintf(stderr, "tio: trace %s\n", qUtf8Printable(text));
+    std::fflush(stderr);
 }
 
 void TioWindow::copyCapture()

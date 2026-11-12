@@ -635,16 +635,18 @@ static void testWindowEntry()
         CHECK(entry->score > 50, "the entry row sorts high");
     }
 
-    // The launch row: launch on Enter, the window on Ctrl+Enter, both on the
-    // same row so the user reading it sees both.
+    // The launch row: one per port, launch on Enter, the window on Ctrl+Enter,
+    // both on the same row so the user reading it sees both.
     const Row* launch = nullptr;
     for (const Row& row : rows) {
-        if (row.id == "launch")
+        if (row.id.rfind("port:", 0) == 0)
             launch = &row;
     }
     CHECK(launch != nullptr, "the launch row is in the list");
     if (launch) {
-        CHECK(launch->action == "launch", "the launch row launches on Enter", launch->action);
+        CHECK(launch->action == "launchPort", "the launch row launches its port on Enter",
+            launch->action);
+        CHECK(launch->title == "tio COM10", "the launch row names its port", launch->title);
         CHECK(launch->moreActions.size() == 1, "the launch row has one more action");
         if (launch->moreActions.size() == 1) {
             CHECK(launch->moreActions[0].first == "openWindow",
@@ -666,6 +668,22 @@ static void testSessionRows()
 
     // No tabs, no session rows: the main list is the plain one.
     CHECK(buildRows(s, Browse::None, lang).size() >= 2, "an empty tab list adds no rows");
+
+    // A snapshot with no enumerated ports still offers the configured one.
+    {
+        const std::vector<Row> plain = buildRows(s, Browse::None, lang);
+        const Row* own = nullptr;
+        for (const Row& row : plain) {
+            if (row.id == "port:10")
+                own = &row;
+        }
+        CHECK(own != nullptr, "the configured port has its row");
+        if (own) {
+            CHECK(own->action == "launchPort", "the configured port row launches", own->action);
+            CHECK(own->subtitle.find("/dev/ttyS9") != std::string::npos,
+                "the row shows the ttyS mapping for its own port", own->subtitle);
+        }
+    }
 
     // A running session the window opened, on a port the search box does not
     // name: its own row, stop on Enter, the port in the id.
@@ -697,11 +715,12 @@ static void testSessionRows()
             "the subtitle is localized, not a phase id", sessionRow->subtitle);
     }
 
-    // The launch row is unaffected by another port's session: it still launches.
+    // The configured port's row is unaffected by another port's session: it
+    // still launches.
     for (const Row& row : rows) {
-        if (row.id == "launch")
-            CHECK(row.action == "launch", "another port's session does not block the launch row",
-                row.action);
+        if (row.id == "port:10")
+            CHECK(row.action == "launchPort",
+                "another port's session does not block this port's row", row.action);
     }
 
     // A session bound to the default port IS the launch row: it stops, and no
@@ -720,15 +739,71 @@ static void testSessionRows()
     const Row* launch = nullptr;
     int stopRows = 0;
     for (const Row& row : boundRows) {
-        if (row.id == "launch")
+        if (row.id == "port:10")
             launch = &row;
         if (row.action == "stopSession")
             ++stopRows;
     }
-    CHECK(launch != nullptr && launch->action == "stop",
-        "the bound session's stop lives on the launch row",
+    CHECK(launch != nullptr && launch->action == "stopPort",
+        "the bound session's stop lives on its port row",
         launch ? launch->action : "");
     CHECK(stopRows == 0, "the bound session is not listed twice");
+}
+
+// Two devices, two rows: the search box lists every port it can see, so the
+// port is chosen where the launch happens instead of in a hidden setting.
+static void testPortRows()
+{
+    Lang lang;
+    Snapshot s;
+    s.port = parsePort("COM8");
+    s.serial.baudrate = 115200;
+    PortInfo eight;
+    eight.com = 8;
+    eight.instanceId = L"USB\\VID_10C4&PID_EA60\\0001";
+    eight.description = L"Silicon Labs CP210x USB to UART Bridge (COM8)";
+    PortInfo nine;
+    nine.com = 9;
+    nine.instanceId = L"USB\\VID_2E8A&PID_4031&MI_02\\8&39BDACDC&0&0002";
+    nine.description = L"USB Serial Device (COM9)";
+    s.ports = {eight, nine};
+
+    const std::vector<Row> rows = buildRows(s, Browse::None, lang);
+    int launchRows = 0;
+    const Row* eightRow = nullptr;
+    const Row* nineRow = nullptr;
+    for (const Row& row : rows) {
+        if (row.action != "launchPort")
+            continue;
+        ++launchRows;
+        if (row.id == "port:8")
+            eightRow = &row;
+        if (row.id == "port:9")
+            nineRow = &row;
+    }
+    CHECK(launchRows == 2, "each port gets one launch row", std::to_string(launchRows));
+    CHECK(eightRow != nullptr && nineRow != nullptr, "both ports are listed");
+    if (eightRow && nineRow) {
+        CHECK(eightRow->title == "tio COM8" && nineRow->title == "tio COM9",
+            "a row names its own port");
+        CHECK(eightRow->subtitle.find("/dev/ttyS7") != std::string::npos,
+            "COM8 maps to ttyS7", eightRow->subtitle);
+        CHECK(nineRow->subtitle.find("/dev/ttyS8") != std::string::npos,
+            "COM9 maps to ttyS8", nineRow->subtitle);
+    }
+
+    // A broken package blocks every row and names the reason; the ports still
+    // appear, because another port cannot fix a package.
+    Snapshot broken = s;
+    broken.defaultReadiness.blocking.push_back(Gate::Package);
+    int disabled = 0;
+    for (const Row& row : buildRows(broken, Browse::None, lang)) {
+        if (row.action != "launchPort" && row.action != "stopPort")
+            continue;
+        if (row.disabled)
+            ++disabled;
+    }
+    CHECK(disabled == 2, "a broken package blocks every port's row", std::to_string(disabled));
 }
 
 // The appearance contract: the look is read from the host's nativeLook, the
@@ -817,6 +892,7 @@ int main()
     testDiagnosticsView();
     testWindowEntry();
     testSessionRows();
+    testPortRows();
     testAppearance();
 
     if (g_failed == 0) {

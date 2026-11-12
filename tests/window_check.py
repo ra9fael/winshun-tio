@@ -1,8 +1,12 @@
 """The standalone window, checked without WinShun.
 
 `tio.exe --window` opens the QML window with no host and no protocol. This
-script starts it in each of the four combinations (zh/en × light/dark), waits for
-the window, and fails if the process died or wrote a QML warning to stderr.
+script starts it in each of the four combinations (zh/en × light/dark), waits, and
+fails if the process died or wrote a QML warning to stderr.
+
+The window is built and laid out with `--no-show` by default, so a run never puts
+a window on the desktop of whoever is working (`--shown` opts into a visible pass
+for a human review).
 
 A QML warning is a real defect here: "Unable to assign [undefined] to …" means a
 binding reads a property the model does not expose, and the window would render
@@ -65,8 +69,10 @@ def qt_folder() -> pathlib.Path | None:
 
 
 def run_case(app_dir: pathlib.Path, data_dir: pathlib.Path, zh: bool, dark: bool,
-             appearance: dict | None = None) -> None:
+             appearance: dict | None = None, shown: bool = False) -> None:
     args = [str(EXE), "--window", "--app-dir", str(app_dir), "--data-dir", str(data_dir)]
+    if not shown:
+        args.append("--no-show")
     if not zh:
         args.append("--en")
     if dark:
@@ -92,7 +98,7 @@ def run_case(app_dir: pathlib.Path, data_dir: pathlib.Path, zh: bool, dark: bool
     try:
         # The window renders within a second or two; a crash shows up as an exit.
         time.sleep(4)
-        check(process.poll() is None, f"the window stays open ({label})",
+        check(process.poll() is None, f"the window stays up ({label})",
               "" if process.poll() is None else f"exit code {process.returncode}")
         check(process.poll() is None, f"the window did not crash ({label})")
     finally:
@@ -109,6 +115,7 @@ def run_case(app_dir: pathlib.Path, data_dir: pathlib.Path, zh: bool, dark: bool
     check(not problems, f"no QML warning ({label})",
           problems[0] if problems else "")
 def main() -> int:
+    shown = "--shown" in sys.argv[1:]
     if not EXE.is_file():
         print(f"the plugin exe is missing: {EXE}", file=sys.stderr)
         return 2
@@ -121,7 +128,7 @@ def main() -> int:
         data_dir = pathlib.Path(folder)
         for zh in (True, False):
             for dark in (False, True):
-                run_case(app_dir, data_dir, zh, dark)
+                run_case(app_dir, data_dir, zh, dark, shown=shown)
 
         # The four styles the host can set: each must load, with no QML warning
         # about a token the bridge does not carry. nativeLook's colours differ
@@ -143,7 +150,7 @@ def main() -> int:
                     "smallControlRadius": 3, "menuRadius": 8, "menuItemRadius": 6,
                 },
             }
-            run_case(app_dir, data_dir, True, True, appearance)
+            run_case(app_dir, data_dir, True, True, appearance, shown=shown)
 
         # Corners square: every radius is zero. The window must still load.
         square = {
@@ -151,7 +158,7 @@ def main() -> int:
             "nativeLook": {"background": "#fff3f3f3", "text": "#ff1b1b1b", "dark": False,
                            "cardRadius": 10, "controlRadius": 5},
         }
-        run_case(app_dir, data_dir, False, False, square)
+        run_case(app_dir, data_dir, False, False, square, shown=shown)
 
         # The window keeps to the data folder it was given: nothing of the host's
         # own configuration is touched.

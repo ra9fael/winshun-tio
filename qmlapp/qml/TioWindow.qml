@@ -40,6 +40,11 @@ Window {
     // What the focused session captured, kept here rather than read on every
     // repaint: the view polls while a session runs and stops when it does.
     property string captureBody: ""
+    // tio takes --log-file once, at launch. A session started before capture
+    // was switched on has no log for this run, and saying "on, records once
+    // launched" would claim it is recording.
+    readonly property bool captureMissed: typeof tio !== "undefined"
+        && tio.sessionActive && tio.captureEnabled && !tio.sessionCapturing
     // "—" is what the model says when the tab names no port.
     readonly property bool hasPort: typeof tio !== "undefined" && tio.portText !== "—"
 
@@ -52,6 +57,39 @@ Window {
         const body = tail.trim().length === 0 ? "" : tail
         if (body !== window.captureBody)
             window.captureBody = body
+    }
+
+    // ---- the test hook -------------------------------------------------------
+    // --auto <action> replays one button's work from a timer: no window, no
+    // mouse. It is what the buttons do, so a click that hangs hangs here too;
+    // a run under --no-show then leaves the desktop alone.
+    function testAction(name) {
+        if (typeof tio === "undefined" || !name)
+            return
+        if (name === "plus") {
+            tio.newSession()
+        } else if (name === "clone") {
+            tio.cloneFocusedSession()
+        } else if (name === "close") {
+            // One tab at a time: tio.sessions is a live view, so the length is
+            // read once and the index is taken before the close.
+            const n = tio.sessions.length
+            for (let i = n - 1; i >= 0; --i)
+                if (tio.sessions[i].focused)
+                    tio.closeSession(i)
+        } else if (name === "capture") {
+            tio.setCapture(true)
+        }
+        tio.trace("auto " + name + " returned, tabs " + tio.sessions.length)
+    }
+
+    Timer {
+        interval: 1200
+        running: typeof testAutoAction !== "undefined" && testAutoAction.length > 0
+        onTriggered: {
+            tio.trace("auto " + testAutoAction + " starting, tabs " + tio.sessions.length)
+            window.testAction(testAutoAction)
+        }
     }
 
     // A port a *running* session holds. It stays selectable — the tab simply
@@ -355,12 +393,11 @@ Window {
                             // idle tabs may name one port, so there is nothing
                             // to run out of.
                             enabled: typeof tio !== "undefined" && tio.sessions.length > 0
-                            onClicked: {
-                                const list = tio.sessions
-                                for (let i = 0; i < list.length; ++i)
-                                    if (list[i].focused)
-                                        tio.cloneSession(i)
-                            }
+                            // The model resolves which tab is focused: reading
+                            // tio.sessions here and looping over it walks a live
+                            // view, and the clone inside the loop grows the list
+                            // it is walking (the tab strip never stopped).
+                            onClicked: tio.cloneFocusedSession()
                         }
                     ]
 
@@ -426,9 +463,11 @@ Window {
                             text: typeof tio === "undefined" ? ""
                                   : tio.sessionCapturing
                                     ? window.tr("捕获中", "capturing")
-                                    : tio.captureEnabled
-                                      ? window.tr("已开启 · 启动后记录", "on · records once launched")
-                                      : window.tr("未捕获", "not capturing")
+                                    : window.captureMissed
+                                      ? window.tr("本次运行没有记录", "this run is not recorded")
+                                      : tio.captureEnabled
+                                        ? window.tr("已开启 · 启动后记录", "on · records once launched")
+                                        : window.tr("未捕获", "not capturing")
                             color: typeof tio !== "undefined" && tio.sessionCapturing
                                    ? DesignTokens.okColor : DesignTokens.faintColor
                             font.pixelSize: DesignTokens.fontSmall
@@ -452,6 +491,10 @@ Window {
                         font.pixelSize: DesignTokens.fontSmall
                         text: !window.hasPort
                               ? window.tr("先在端口与参数里选择一个串口", "pick a port in Port & parameters first")
+                              : window.captureMissed
+                                ? window.tr("捕获是在启动前定下的：这个会话启动时还没打开它，所以本次运行没有内容。停止后再启动，从现在起才记录。",
+                                            "Capture is decided at launch: this session started before it was on, so nothing "
+                                            + "was recorded for this run. Stop it and launch again to record from then on.")
                               : !(typeof tio !== "undefined" && tio.captureEnabled)
                                 ? window.tr("打开捕获：启动时让 tio 用它自己的 --log-file 把收发写进本机日志，插件只读这个文件，不碰串口。",
                                             "Turn capture on and the launch lets tio write its own --log-file inside this "
@@ -489,8 +532,11 @@ Window {
                                 background: null
                                 placeholderText: typeof tio !== "undefined" && tio.sessionCapturing
                                                  ? window.tr("等设备说话…", "waiting for the device to speak…")
-                                                 : window.tr("这里只有 tio 的日志：打开捕获并启动会话后才有内容。",
-                                                             "only the log tio writes appears here: turn capture on and launch.")
+                                                 : window.captureMissed
+                                                   ? window.tr("本次运行没有日志：停止会话，再启动一次。",
+                                                               "no log for this run: stop the session and launch it again.")
+                                                   : window.tr("这里只有 tio 的日志：打开捕获并启动会话后才有内容。",
+                                                               "only the log tio writes appears here: turn capture on and launch.")
                             }
                         }
                     }
