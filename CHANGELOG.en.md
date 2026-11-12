@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.1.1] - 2026-11-12
+
+### Crash fix (new session, start capture)
+
+- **The cause was the host's memory ceiling, not the window's logic**: `plugin.json` asked for `runtime.memoryMB` 128, and WinShun applies it as the plugin process's `JOB_OBJECT_LIMIT_PROCESS_MEMORY`; the Qt Quick window alone commits 120–130 MB, so the process sat right at the ceiling. Opening a tab (a new QML delegate) or starting capture (a text box plus a refresh timer) needed the next allocation, failed, and the process exited with `0xC0000005` (access violation) or `0xC0000409` (fast fail) — recorded in the host log as "崩溃（退出码 3221225477 / 3221226505）" followed by "1 秒后重启".
+- **Reproduced**: the same `tio.exe` inside a 128 MB job object died on the 5th "+"; with the ceiling at 512 MB it took 10 clicks and peaked around 133 MB. The standalone window uses no job object, which is why `tio.exe --window` never crashed — only the copy installed in WinShun.
+- **Fixed** by raising `runtime.memoryMB` to 512 (the host default, ~4x headroom). The native probe now fails when `plugin.json` asks for less than 256 MB, so the ceiling cannot quietly come back down.
+- The plugin description was corrected too: the window can now turn capture on (tio writes its own local log, the plugin only reads it), so "the plugin never reads, renders or logs serial content" no longer held.
+
 ## [Unreleased]
 
 ### Standalone window overhaul

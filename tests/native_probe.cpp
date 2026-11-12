@@ -91,6 +91,23 @@ int main(int argc, char** argv)
         "the manifest records where the runtime came from", package.sourceUrl);
     report(!package.license.empty(), "the manifest records the runtime licence", package.license);
 
+    // 1a. The manifest's memory ceiling must leave the window room to run. The
+    //     host starts this process inside a job object whose commit limit is
+    //     runtime.memoryMB, and the Qt Quick window alone sits at ~130 MB: a
+    //     ceiling near that kills the process with STATUS_ACCESS_VIOLATION (or
+    //     a fast fail) on the first allocation that opens a tab or turns
+    //     capture on. 256 MB is the floor this check holds the manifest to.
+    {
+        const std::string text = tioplug::detail::readPluginFile(pluginDir, L"plugin.json");
+        report(!text.empty(), "plugin.json is readable");
+        std::string problem;
+        const auto manifest = winshun::Json::parse(text, &problem);
+        const long long memoryMB = manifest ? (*manifest)["runtime"]["memoryMB"].toInt(64) : 0;
+        report(memoryMB >= 256, "the manifest leaves the window room to run",
+            "memoryMB " + std::to_string(memoryMB)
+                + (problem.empty() ? std::string() : " (" + problem + ")"));
+    }
+
     // 1b. The third-party record travels with the package: every component
     //     names a source, and the licence texts it points at exist on disk.
     report(!package.thirdParty.empty(), "the third-party record ships with the package",

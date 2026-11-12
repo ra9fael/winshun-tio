@@ -157,7 +157,12 @@ def main() -> int:
     if args.tag:
         if args.tag != "v" + version:
             raise ValueError("the tag does not match plugin.json")
-        status = subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT).strip()
+        # Tracked changes only: an untracked draft next to the source must not
+        # block a release, and it is never packaged either (BASE_FILES is a
+        # whitelist).
+        status = subprocess.check_output(
+            ["git", "status", "--porcelain", "--untracked-files=no"], cwd=ROOT
+        ).strip()
         if status:
             raise ValueError("a release requires a clean worktree")
         for name in ("CHANGELOG.md", "CHANGELOG.en.md"):

@@ -6,10 +6,10 @@
     "zh": "tio 串口终端",
     "en": "tio serial terminal"
   },
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": {
-    "zh": "用嵌入包的 tio 打开串口终端：在搜索框里就地设置端口、波特率、数据位、校验、停止位和流控，Enter 启动、再 Enter 停止；也可开独立窗口配置。终端由 Windows Terminal 或 conhost 提供，插件本身不读取、不显示、不记录任何串口内容。",
-    "en": "Open a serial terminal with the bundled tio: set the port, baud rate, data bits, parity, stop bits and flow control in place in the search box, Enter starts and Enter again stops, or configure in a standalone window. Windows Terminal or conhost provides the terminal; the plugin never reads, renders or logs serial content."
+    "zh": "用嵌入包的 tio 打开串口终端：在搜索框里就地设置端口、波特率、数据位、校验、停止位和流控，Enter 启动、再 Enter 停止；也可开独立窗口按会话配置。终端由 Windows Terminal 或 conhost 提供；窗口里可让 tio 自己把收发写进本机日志，插件只读那个文件、不上传。",
+    "en": "Open a serial terminal with the bundled tio: set the port, baud rate, data bits, parity, stop bits and flow control in place in the search box, Enter starts and Enter again stops, or configure per session in a standalone window. Windows Terminal or conhost provides the terminal; the window can let tio write its traffic to a local log, which the plugin only reads and never uploads."
   },
   "author": "ra9fael",
   "homepage": "https://github.com/ra9fael/winshun-tio",
@@ -27,7 +27,7 @@
     "sandbox": "normal",
     "start": "lazy",
     "timeoutMs": 1500,
-    "memoryMB": 128,
+    "memoryMB": 512,
     "idleExitSec": 0,
     "encoding": "utf-8"
   },
