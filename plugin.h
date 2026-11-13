@@ -92,7 +92,9 @@ protected:
         // ---- launch and stop ----
         if (id == "launch") {
             std::string error;
-            const bool started = controller.launch(controller.form(), error);
+            // The search box stays local: only the standalone window, where
+            // the sharing switch and its warning are visible, opens the socket.
+            const bool started = controller.launch(controller.form(), error, false);
             m_browse = Browse::None;
             if (!started) {
                 // The launch row carries the same reason; the toast keeps it
@@ -138,7 +140,7 @@ protected:
             Form form = controller.form();
             form.port = L"COM" + winshun::wide(std::to_string(com));
             std::string error;
-            if (!controller.launch(form, error))
+            if (!controller.launch(form, error, false))
                 return {winshun::effect::notify(describe(error)), replace(rows())};
             return {replace(rows())};
         }

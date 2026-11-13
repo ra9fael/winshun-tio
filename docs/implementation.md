@@ -130,6 +130,7 @@ cmake --build build\msvc
 | L2 | `integration.py` | 70 项：协议往返、候选列表、落盘、宿主设置种子、诊断视图、窗口入口、语言、拒绝、重启 |
 | L2+ | `integration.py --launch` | 76 项：另外真起一个会话并停止 |
 | L2' | `window_check.py` | 28 项：中英 × 深浅 4 组 + 宿主四种风格 + 直角，无 QML 警告 |
+| 开发期 GUI | `pwsh tools\remote_share_gui.ps1` | 可见窗口 + 临时 dataDir，手工检查共享确认/端口/状态；`-Check` 为无窗口自检 |
 | L3 | `host_smoke.py` | 16 项：按宿主方式跑真实 DLL，含 `openWindow` |
 | L4 | 真串口 | COM8 → `/dev/ttyS7` 能连、停后可再开 |
 | L5 | 干净机 | 闭包复测（**未跑**） |

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(tio VERSION 0.1.0 LANGUAGES CXX)
+project(tio VERSION 0.1.3 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -11,6 +11,8 @@ if(NOT WIN32 OR NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
 endif()
 
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+set(TIO_ARTIFACT_DIR "${CMAKE_CURRENT_SOURCE_DIR}" CACHE PATH
+  "Directory for the tio.exe and TioApp.dll build outputs")
 
 add_compile_definitions(UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN WINVER=0x0A00 _WIN32_WINNT=0x0A00)
 if(MSVC)
@@ -33,11 +35,11 @@ add_executable(tio qmlapp/stub/main.cpp tio.rc)
 target_include_directories(tio PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 # setupapi/bcrypt/advapi32 are what --probe and --probe verify use; the stub
 # itself only needs kernel32.
-target_link_libraries(tio PRIVATE setupapi bcrypt advapi32 user32)
+target_link_libraries(tio PRIVATE setupapi bcrypt advapi32 user32 ws2_32)
 # Beside TioApp.dll, where plugin.json's runtime.program points.
-set_target_properties(tio PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
+set_target_properties(tio PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${TIO_ARTIFACT_DIR}")
 foreach(config DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
-  set_target_properties(tio PROPERTIES RUNTIME_OUTPUT_DIRECTORY_${config} "${CMAKE_CURRENT_SOURCE_DIR}")
+  set_target_properties(tio PROPERTIES RUNTIME_OUTPUT_DIRECTORY_${config} "${TIO_ARTIFACT_DIR}")
 endforeach()
 
 # The plugin itself. controller.h / plugin.h / the rows are the same sources the
@@ -57,13 +59,17 @@ qt_add_library(TioApp SHARED
   qt_window_icon.h
   qmlapp/TioWindow.cpp
   qmlapp/TioWindow.h
+  qmlapp/ShareClient.cpp
+  qmlapp/ShareClient.h
+  qmlapp/AnsiText.cpp
+  qmlapp/AnsiText.h
 )
 target_include_directories(TioApp PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(TioApp PRIVATE Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickControls2
-  setupapi bcrypt advapi32 user32 comdlg32)
-set_target_properties(TioApp PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
+  setupapi bcrypt advapi32 user32 ws2_32)
+set_target_properties(TioApp PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${TIO_ARTIFACT_DIR}")
 foreach(config DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
-  set_target_properties(TioApp PROPERTIES RUNTIME_OUTPUT_DIRECTORY_${config} "${CMAKE_CURRENT_SOURCE_DIR}")
+  set_target_properties(TioApp PROPERTIES RUNTIME_OUTPUT_DIRECTORY_${config} "${TIO_ARTIFACT_DIR}")
 endforeach()
 
 # Only the modules the shared-Qt contract guarantees: QtQuick, QtQuick.Controls
@@ -137,14 +143,17 @@ endforeach()
 enable_testing()
 add_test(NAME tio_logic COMMAND tio_tests)
 add_test(NAME tio_window_model COMMAND tio_window_tests)
-
+add_test(NAME tio_share_client COMMAND tio_share_client_tests)
+add_test(NAME tio_ansi_text COMMAND tio_ansi_text_tests)
 # The window's model (path B): the rules the search box does not have — a form
 # edited in a copy, saved explicitly, and an outside change that must not
 # overwrite what the user is typing. It needs Qt (QObject, QVariant) but no
 # window server: no widget is created.
-add_executable(tio_window_tests tests/test_window.cpp qmlapp/TioWindow.cpp qmlapp/TioWindow.h)
+add_executable(tio_window_tests tests/test_window.cpp qmlapp/TioWindow.cpp qmlapp/TioWindow.h
+  qmlapp/ShareClient.cpp qmlapp/ShareClient.h
+  qmlapp/AnsiText.cpp qmlapp/AnsiText.h)
 target_include_directories(tio_window_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-target_link_libraries(tio_window_tests PRIVATE Qt6::Core Qt6::Gui setupapi bcrypt advapi32 comdlg32)
+target_link_libraries(tio_window_tests PRIVATE Qt6::Core Qt6::Gui setupapi bcrypt advapi32 ws2_32)
 if(MSVC)
   target_compile_options(tio_window_tests PRIVATE /utf-8 /W4 /permissive-)
 else()
@@ -166,12 +175,39 @@ if(WIN32)
     VERBATIM)
 endif()
 
+# The shared-socket consumer: a fake loopback listener stands in for tio -S.
+add_executable(tio_share_client_tests tests/test_share_client.cpp
+  qmlapp/ShareClient.cpp qmlapp/ShareClient.h
+  qmlapp/AnsiText.cpp qmlapp/AnsiText.h)
+target_include_directories(tio_share_client_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(tio_share_client_tests PRIVATE ws2_32)
+if(MSVC)
+  target_compile_options(tio_share_client_tests PRIVATE /utf-8 /W4 /permissive-)
+else()
+  target_compile_options(tio_share_client_tests PRIVATE -finput-charset=UTF-8 -fexec-charset=UTF-8 -Wall -Wextra)
+endif()
+set_target_properties(tio_share_client_tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
+set_tests_properties(tio_share_client PROPERTIES TIMEOUT 15)
+
+# The ANSI reducer: pure rules, no socket and no Qt.
+add_executable(tio_ansi_text_tests tests/test_ansi_text.cpp
+  qmlapp/AnsiText.cpp qmlapp/AnsiText.h)
+target_include_directories(tio_ansi_text_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+if(MSVC)
+  target_compile_options(tio_ansi_text_tests PRIVATE /utf-8 /W4 /permissive-)
+else()
+  target_compile_options(tio_ansi_text_tests PRIVATE -finput-charset=UTF-8 -fexec-charset=UTF-8 -Wall -Wextra)
+endif()
+set_target_properties(tio_ansi_text_tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
+
 # The native checks need the packaged runtime, so they run from the plugin folder
 # and are not part of the default suite: they start real processes.
 add_executable(tio_native_probe tests/native_probe.cpp)
 target_include_directories(tio_native_probe PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-target_link_libraries(tio_native_probe PRIVATE setupapi bcrypt advapi32)
+target_link_libraries(tio_native_probe PRIVATE setupapi bcrypt advapi32 ws2_32)
 if(MSVC)
   target_compile_options(tio_native_probe PRIVATE /utf-8 /W4 /permissive-)
 endif()
 set_target_properties(tio_native_probe PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
+add_test(NAME tio_share_port_preflight COMMAND $<TARGET_FILE:tio_native_probe> --share-port)
+set_tests_properties(tio_share_port_preflight PROPERTIES TIMEOUT 5)

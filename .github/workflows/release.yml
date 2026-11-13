@@ -1,0 +1,171 @@
+name: build-and-release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Source branch/SHA or existing version tag to verify
+        type: string
+        default: ""
+      publish:
+        description: Publish the matching verified tag
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tio-release-${{ inputs.ref || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    if: github.event_name == 'workflow_dispatch' || (github.event.created && !github.event.deleted)
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.meta.outputs.sha }}
+      tag: ${{ steps.meta.outputs.tag }}
+      publish: ${{ steps.meta.outputs.publish }}
+      version: ${{ steps.meta.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate source and release identity
+        id: meta
+        shell: bash
+        env:
+          INPUT_REF: ${{ inputs.ref }}
+          INPUT_PUBLISH: ${{ inputs.publish }}
+          EVENT_NAME: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="$(python -c 'import json; print(json.load(open("plugin.json", encoding="utf-8"))["version"])')"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          source_sha="$(git rev-parse HEAD)"
+          if [[ "$EVENT_NAME" == push ]]; then
+            [[ "$REF_TYPE" == tag && "$REF_NAME" == "v$version" ]]
+            publish=true
+            tag="$REF_NAME"
+          else
+            ref="$INPUT_REF"
+            tag=""
+            publish=false
+            if [[ "$ref" == v* ]]; then
+              tag="$ref"
+              [[ "$tag" == "v$version" ]]
+              source_sha="$(git rev-parse "refs/tags/$tag^{commit}")"
+              [[ "$source_sha" == "$(git rev-parse HEAD)" ]]
+              [[ "$INPUT_PUBLISH" == true ]] && publish=true
+            elif [[ "$INPUT_PUBLISH" == true ]]; then
+              echo "::error::publish=true requires the matching existing v$version tag"; exit 1
+            fi
+          fi
+          {
+            echo "sha=$source_sha"
+            echo "tag=$tag"
+            echo "publish=$publish"
+            echo "version=$version"
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: verify
+    runs-on: windows-2022
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.verify.outputs.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.12.0"
+          host: windows
+          target: desktop
+          arch: win64_msvc2022_64
+          cache: true
+      - name: Configure
+        shell: pwsh
+        run: cmake -S . -B build/ci -A x64 -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR" -DTIO_ARTIFACT_DIR="$PWD/build/ci/artifacts"
+      - name: Build
+        run: cmake --build build/ci --config Release --parallel 2
+      - name: Test
+        run: ctest --test-dir build/ci -C Release --output-on-failure --no-tests=error
+      - name: Package tested binaries
+        env:
+          RELEASE_TAG: ${{ needs.verify.outputs.tag }}
+        run: |
+          $options = @('tools/package.py', '--artifact-dir', 'build/ci/artifacts', '--out', 'dist/ci')
+          if ($env:RELEASE_TAG) { $options += @('--tag', $env:RELEASE_TAG) }
+          python @options
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Generate release notes from the changelog
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+        shell: pwsh
+        run: |
+          @'
+          import os, re
+          from pathlib import Path
+          text = Path('CHANGELOG.md').read_text(encoding='utf-8')
+          pattern = r'^## \[' + re.escape(os.environ['VERSION']) + r'\][^\n]*\n(.*?)(?=^## \[|\Z)'
+          match = re.search(pattern, text, re.M | re.S)
+          if not match:
+              raise SystemExit('No changelog section for ' + os.environ['VERSION'])
+          out = Path('dist/ci/release-notes.md')
+          out.parent.mkdir(parents=True, exist_ok=True)
+          out.write_text(match.group(1).strip() + '\n', encoding='utf-8')
+          '@ | Set-Content -Encoding utf8 build_release_notes.py
+          python build_release_notes.py
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Remove-Item build_release_notes.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: verified-tio-package
+          path: dist/ci/*
+          if-no-files-found: error
+
+  publish:
+    needs: [verify, build]
+    if: needs.verify.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.verify.outputs.sha }}
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: verified-tio-package
+          path: dist/ci
+      - name: Publish immutable verified package
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.verify.outputs.tag }}
+          VERSION: ${{ needs.verify.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")" = "${{ needs.verify.outputs.sha }}"
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo '::error::Release already exists; refusing to overwrite assets.'; exit 1
+          fi
+          gh release create "$RELEASE_TAG" dist/ci/*.wsplugin dist/ci/*.sha256 \
+            --verify-tag --title "ra9fael.tio $VERSION" \
+            --notes-file dist/ci/release-notes.md

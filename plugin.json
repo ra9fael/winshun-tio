@@ -6,10 +6,10 @@
     "zh": "tio 串口终端",
     "en": "tio serial terminal"
   },
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": {
-    "zh": "用嵌入包的 tio 打开串口终端：在搜索框里就地设置端口、波特率、数据位、校验、停止位和流控，Enter 启动、再 Enter 停止；也可开独立窗口按会话配置。终端由 Windows Terminal 或 conhost 提供；窗口里可让 tio 自己把收发写进本机日志，插件只读那个文件、不上传。",
-    "en": "Open a serial terminal with the bundled tio: set the port, baud rate, data bits, parity, stop bits and flow control in place in the search box, Enter starts and Enter again stops, or configure per session in a standalone window. Windows Terminal or conhost provides the terminal; the window can let tio write its traffic to a local log, which the plugin only reads and never uploads."
+    "zh": "用嵌入包的 tio 打开串口终端：在搜索框里就地设置端口、波特率、数据位、校验、停止位和流控，Enter 启动、再 Enter 停止；也可开独立窗口按会话配置。独立窗口可确认开启双向远程串口共享，局域网客户端可读写串口。",
+    "en": "Open a serial terminal with the bundled tio: set the port, baud rate, data bits, parity, stop bits and flow control in the search box, Enter starts and Enter again stops, or configure per session in a standalone window. The standalone window can explicitly confirm bidirectional remote serial sharing; LAN clients can read and write to the serial device."
   },
   "author": "ra9fael",
   "homepage": "https://github.com/ra9fael/winshun-tio",
@@ -17,7 +17,9 @@
   "minWinShun": "0.22.0",
   "permissions": [
     "processes",
-    "ui"
+    "ui",
+    "clipboard:write",
+    { "network:listen": ["TCP 1024-65535"] }
   ],
   "runtime": {
     "mode": "resident",
@@ -75,7 +77,7 @@
         }
       ],
       "ai": {
-        "description": "Configure and launch the bundled tio serial terminal. Rows show the port (COMn and its /dev/ttyS(n-1) mapping), baud rate, data bits, parity, stop bits, flow control and the terminal backend (Windows Terminal first, conhost as the fallback). Enter on the launch row starts tio after six pre-launch checks; Enter again stops the session this plugin started. Parameter rows edit in place. A started process is not a connected port: the plugin never reads serial data and never claims the port is open."
+      "description": "Configure and launch the bundled tio serial terminal. Rows show the port (COMn and its /dev/ttyS(n-1) mapping), baud rate, data bits, parity, stop bits, flow control and the terminal backend (Windows Terminal first, conhost as the fallback). Enter on the launch row starts tio after six pre-launch checks; Enter again stops the session this plugin started. Parameter rows edit in place. The standalone window can explicitly confirm bidirectional remote serial sharing on TCP 54321; remote clients can write to the device."
       }
     }
   ],
@@ -163,6 +165,32 @@
       },
       "options": ["auto", "wt", "conhost"],
       "default": "auto"
+    },
+    {
+      "key": "share",
+      "type": "bool",
+      "title": {
+        "zh": "默认开启双向串口共享",
+        "en": "Enable bidirectional serial sharing by default"
+      },
+      "hint": {
+        "zh": "启动会话时让 tio 用 -S 监听；独立窗口可随时关闭。共享端口对所有网卡开放，客户端可向串口写入",
+        "en": "Launch tio with -S; the standalone window can turn it off. The shared port listens on all interfaces and clients can write to the serial device"
+      },
+      "default": true
+    },
+    {
+      "key": "sharePort",
+      "type": "number",
+      "title": {
+        "zh": "共享端口",
+        "en": "Shared port"
+      },
+      "hint": {
+        "zh": "1024–65535，默认 54321；独立窗口可调。更改端口后需要重新启动会话",
+        "en": "1024–65535, default 54321; editable in the standalone window. A running session must be restarted after a change"
+      },
+      "default": 54321
     }
   ]
 }

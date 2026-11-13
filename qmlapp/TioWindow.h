@@ -10,6 +10,7 @@
 // and the model is only ever touched there.
 #pragma once
 
+#include "ShareClient.h"
 #include "core.h"
 #include "window_hook.h"
 
@@ -91,15 +92,29 @@ class TioWindow : public QObject {
     // its friendly name, its phase and whether the window is drawing it.
     Q_PROPERTY(QVariantList sessions READ sessions NOTIFY changed)
 
-    // ---- the session's content ----
-    // tio takes its logging parameters once, at launch: --log-file names the
-    // file it writes and --log-strip keeps the escapes out. The switch therefore
-    // decides the *next* launch, and the window only ever reads the file tio
-    // wrote — it never opens the port a second time.
-    Q_PROPERTY(bool captureEnabled READ captureEnabled NOTIFY changed)
-    // True while the focused session runs with capture on: its log exists.
-    Q_PROPERTY(bool sessionCapturing READ sessionCapturing NOTIFY changed)
-    Q_PROPERTY(QString capturePath READ capturePath NOTIFY changed)
+    // ---- optional bidirectional remote control ----
+    Q_PROPERTY(bool shareEnabled READ shareEnabled NOTIFY changed)
+    Q_PROPERTY(int sharePort READ sharePort NOTIFY changed)
+    Q_PROPERTY(bool sessionSharing READ sessionSharing NOTIFY changed)
+    Q_PROPERTY(int sessionSharePort READ sessionSharePort NOTIFY changed)
+    // The window's own read-only view of the shared socket: tio mirrors the
+    // serial session there, and the GUI connects to loopback to show it.
+    Q_PROPERTY(bool shareConnected READ shareConnected NOTIFY changed)
+    Q_PROPERTY(QString shareContent READ shareContent NOTIFY changed)
+    // "terminal" (ANSI reduced), "ascii" (raw text) or "hex": how the received
+    // bytes are rendered. The bytes themselves are never altered.
+    Q_PROPERTY(QString shareFormat READ shareFormat WRITE setShareFormat NOTIFY changed)
+    Q_PROPERTY(int shareBytes READ shareBytes NOTIFY changed)
+    // False means the window may write to the socket (off by default).
+    Q_PROPERTY(bool shareReadOnly READ shareReadOnly WRITE setShareReadOnly NOTIFY changed)
+    // The terminal screen as rows of styled runs: [{spans:[{text,color,bold}]}]
+    Q_PROPERTY(QVariantList shareLines READ shareLines NOTIFY changed)
+    // How the hex view draws the same bytes: bytes per row (8/16/32) and whether
+    // the decode column is shown. Both are remembered across launches.
+    Q_PROPERTY(int shareHexRow READ shareHexRow WRITE setShareHexRow NOTIFY changed)
+    Q_PROPERTY(bool shareHexAscii READ shareHexAscii WRITE setShareHexAscii NOTIFY changed)
+    // The folder the auto-log writes into; empty until the first byte is logged.
+    Q_PROPERTY(QString shareLogDir READ shareLogDir NOTIFY changed)
 
 public:
     explicit TioWindow(QObject* parent = nullptr);
@@ -161,9 +176,29 @@ public:
     QString sessionToken() const;
     QVariantList sessions() const;
 
-    bool captureEnabled() const;
-    bool sessionCapturing() const;
-    QString capturePath() const;
+    bool shareEnabled() const;
+    int sharePort() const;
+    bool sessionSharing() const;
+    int sessionSharePort() const;
+    bool shareConnected() const;
+    QString shareContent() const;
+    QString shareFormat() const { return m_shareFormat; }
+    void setShareFormat(const QString& format);
+    int shareBytes() const { return m_shareBytes; }
+    bool shareReadOnly() const { return m_shareReadOnly; }
+    void setShareReadOnly(bool readOnly);
+    QVariantList shareLines() const;
+    int shareHexRow() const;
+    void setShareHexRow(int bytes);
+    bool shareHexAscii() const;
+    void setShareHexAscii(bool on);
+    QString shareLogDir() const;
+    // The logs already written, newest first: [{name, path, bytes, time}]. Empty
+    // when nothing has been logged yet.
+    Q_INVOKABLE QVariantList shareLogs() const;
+    // Opens one log (or the folder) in whatever the shell uses for it.
+    Q_INVOKABLE void openShareLog(const QString& path);
+    Q_INVOKABLE void openShareLogDir();
 
     // ---- session tabs ----
     // The window is session-oriented: every tab binds one port to at most one
@@ -181,18 +216,25 @@ public:
     Q_INVOKABLE bool cloneFocusedSession();
     // Refused while the tab's session runs: the tab is the only handle to it.
     Q_INVOKABLE bool closeSession(int index);
-    Q_INVOKABLE void restart();
+    Q_INVOKABLE void restart(bool allowRemoteShare = false);
 
-    // ---- the session's content ----
-    // Applies to the next launch: tio's logging cannot be turned on for a
-    // process already running, and the notice says so.
-    Q_INVOKABLE void setCapture(bool on);
-    // The tail of the log tio wrote, as text (log-strip already removed escapes).
-    Q_INVOKABLE QString captureTail(int maxBytes = 32768) const;
-    Q_INVOKABLE void copyCapture();
     // A diagnostic line for a headless run (--auto); stderr, unbuffered.
     Q_INVOKABLE void trace(const QString& text);
-    Q_INVOKABLE bool saveCapture();
+    Q_INVOKABLE void setShareEnabled(bool enabled);
+    Q_INVOKABLE bool setSharePort(int port);
+    Q_INVOKABLE void copySharePort();
+    Q_INVOKABLE void clearShareContent();
+    // Copies the content exactly as shown (the current format) to the clipboard.
+    Q_INVOKABLE void copyShareContent();
+    Q_INVOKABLE bool saveShareContent();
+    // Opt-in: append every received byte to a log inside dataDir.
+    Q_INVOKABLE void setShareLog(bool on);
+    Q_PROPERTY(bool shareLogEnabled READ shareLogEnabled NOTIFY changed)
+    Q_PROPERTY(QString shareLogPath READ shareLogPath NOTIFY changed)
+    bool shareLogEnabled() const { return m_shareLogOn; }
+    QString shareLogPath() const;
+    // The QML timer calls this to publish the socket's new tail.
+    Q_INVOKABLE void sharePoll();
 
     // ---- editing ----
     Q_INVOKABLE void selectPort(int com);
@@ -215,7 +257,7 @@ public:
 
     // ---- persistence and the session ----
     Q_INVOKABLE bool save();
-    Q_INVOKABLE bool launch();
+    Q_INVOKABLE bool launch(bool allowRemoteShare = false);
     Q_INVOKABLE void stop();
     Q_INVOKABLE QString diagnostics() const;
     Q_INVOKABLE void copyDiagnostics();
@@ -232,6 +274,12 @@ signals:
 private:
     void reload();
     void recomputeDirty();
+    // Starts or stops the window's loopback consumer to match the focused
+    // session's sharing state; called from reload().
+    void syncShareClient();
+    // Rebuilds the copyable text (terminal screen or hex dump) from the bytes the
+    // consumer holds, so Copy and Save match what the view draws.
+    void refreshShareView();
     // Runs a form edit: adopts it, marks the form dirty, repaints.
     void edit(const std::function<void(Form&)>& change);
     // The focused tab's form: what the cards below draw.
@@ -239,6 +287,27 @@ private:
 
     Form m_form;          // the window's copy while editing
     bool m_dirty = false;
+    // The window's consumer of tio's shared socket. It is created lazily and
+    // stopped whenever the focused session is not sharing.
+    std::unique_ptr<ShareClient> m_shareClient;
+    int m_shareClientPort = 0;
+    // Polling is driven by a timer in the window, so the model only exposes a
+    // snapshot rather than waking QML on every socket read.
+    QString m_shareContent;
+    QString m_shareFormat = "ascii";
+    int m_shareBytes = 0;
+    bool m_shareReadOnly = true;
+    // Absolute byte offset the log writer and the view have consumed.
+    std::uint64_t m_shareCursor = 0;
+    std::uint64_t m_shareRevision = 0;
+    // On by default: reload() reads the persisted value from the controller.
+    bool m_shareLogOn = true;
+    // The hex view's shape, read back from the controller on reload().
+    int m_shareHexRow = 16;
+    bool m_shareHexAscii = false;
+    QString m_shareLogPath;
+    std::uint64_t m_shareLogBytes = 0;
+    void appendShareLog(const std::string& bytes);
 };
 
 // The one model the window draws, alive for the process.

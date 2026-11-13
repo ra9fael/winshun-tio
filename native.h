@@ -9,6 +9,8 @@
 // state under a mutex.
 #pragma once
 
+#include <winsock2.h>
+
 #include "logic.h"
 #include "winshun.h"
 
@@ -48,6 +50,46 @@ inline bool fileExists(const std::wstring& path)
 {
     const DWORD attrs = ::GetFileAttributesW(path.c_str());
     return attrs != INVALID_FILE_ATTRIBUTES && !(attrs & FILE_ATTRIBUTE_DIRECTORY);
+}
+
+// Mirrors tio's inet bind (all IPv4 interfaces) to catch a port that is
+// already occupied before opening a serial session. This is a preflight only:
+// another process can still claim the port before tio binds it.
+inline bool sharedSocketPortAvailable(int port, std::string& error)
+{
+    error.clear();
+    if (port < 1 || port > 65535) {
+        error = "the shared socket port must be between 1 and 65535";
+        return false;
+    }
+    WSADATA data{};
+    const int startup = ::WSAStartup(MAKEWORD(2, 2), &data);
+    if (startup != 0) {
+        error = "Winsock startup failed (" + std::to_string(startup) + ")";
+        return false;
+    }
+    SOCKET socket = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (socket == INVALID_SOCKET) {
+        const int code = ::WSAGetLastError();
+        ::WSACleanup();
+        error = "could not check the shared socket port (" + std::to_string(code) + ")";
+        return false;
+    }
+    BOOL exclusive = TRUE;
+    ::setsockopt(socket, SOL_SOCKET, SO_EXCLUSIVEADDRUSE,
+        reinterpret_cast<const char*>(&exclusive), sizeof exclusive);
+    sockaddr_in address{};
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = htonl(INADDR_ANY);
+    address.sin_port = htons(static_cast<u_short>(port));
+    const bool available = ::bind(socket, reinterpret_cast<const sockaddr*>(&address),
+        sizeof address) == 0;
+    const int code = available ? 0 : ::WSAGetLastError();
+    ::closesocket(socket);
+    ::WSACleanup();
+    if (!available)
+        error = "the shared socket port is already in use (Winsock " + std::to_string(code) + ")";
+    return available;
 }
 
 inline std::wstring joinPath(const std::wstring& base, const std::wstring& name)
@@ -1007,13 +1049,29 @@ inline LaunchResult launch(const Plan& plan, const LaunchContext& context, DWORD
     }
 
     if (plan.backend == Backend::Conhost) {
+        const DWORD pid = info.dwProcessId;
+        HANDLE process = info.hProcess;
         unsigned long long created = 0;
-        processCreationTime(info.dwProcessId, created);
-        result.pid = info.dwProcessId;
+        processCreationTime(pid, created);
+        // A bind conflict in tio's -S listener exits immediately. Give the
+        // process a short startup window so that failure is reflected instead
+        // of being recorded as a running session.
+        const bool sharing = std::find(plan.tio.begin(), plan.tio.end(), "-S") != plan.tio.end();
+        const DWORD early = sharing ? ::WaitForSingleObject(process, 350) : WAIT_TIMEOUT;
+        if (early == WAIT_OBJECT_0) {
+            DWORD exitCode = 0;
+            ::GetExitCodeProcess(process, &exitCode);
+            ::CloseHandle(info.hThread);
+            ::CloseHandle(process);
+            result.error = exitCode == 0 ? "tio exited during startup"
+                                         : "tio exited during startup (exit " + std::to_string(exitCode) + ")";
+            return result;
+        }
+        result.pid = pid;
         result.created = created;
         result.ok = true;
         ::CloseHandle(info.hThread);
-        ::CloseHandle(info.hProcess);
+        ::CloseHandle(process);
         return result;
     }
 
@@ -1031,6 +1089,21 @@ inline LaunchResult launch(const Plan& plan, const LaunchContext& context, DWORD
     if (!processCreationTime(child, created)) {
         result.error = "the tio process vanished before it could be recorded";
         return result;
+    }
+    if (std::find(plan.tio.begin(), plan.tio.end(), "-S") != plan.tio.end()) {
+        HANDLE process = ::OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,
+            FALSE, child);
+        if (process) {
+            const DWORD early = ::WaitForSingleObject(process, 350);
+            if (early == WAIT_OBJECT_0) {
+                DWORD exitCode = 0;
+                ::GetExitCodeProcess(process, &exitCode);
+                ::CloseHandle(process);
+                result.error = "tio exited during startup (exit " + std::to_string(exitCode) + ")";
+                return result;
+            }
+            ::CloseHandle(process);
+        }
     }
     result.pid = child;
     result.created = created;

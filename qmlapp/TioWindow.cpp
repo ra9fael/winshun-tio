@@ -8,11 +8,12 @@
 // overwrite what the user is typing; the notice says so instead.
 #include "TioWindow.h"
 
+#include "ShareClient.h"
+#include "AnsiText.h"
 #include "logic.h"
 #include "native.h"
 #include "rows.h"
 
-#include <QClipboard>
 #include <QDesktopServices>
 #include <QDir>
 #include <QFile>
@@ -27,6 +28,7 @@
 #include <windows.h>
 #include <commdlg.h>
 
+#include <cstring>
 #include <functional>
 #include <mutex>
 
@@ -81,6 +83,8 @@ TioWindow::TioWindow(QObject* parent) : QObject(parent)
 
 TioWindow::~TioWindow()
 {
+    if (m_shareClient)
+        m_shareClient->stop();
     // The protocol thread may still be serving; dropping the callback is enough
     // (the Controller holds it behind the same mutex it notifies under).
     core().controller().attach(Controller::Notify{});
@@ -93,6 +97,12 @@ void TioWindow::reload()
     // must not silently discard.
     if (!m_dirty)
         m_form = focusedForm();
+    // Logging is a window preference, not a session one: read it back so the
+    // switch shows what the controller persisted (on by default).
+    m_shareLogOn = core().controller().shareLog();
+    m_shareHexRow = core().controller().shareHexRow();
+    m_shareHexAscii = core().controller().shareHexAscii();
+    syncShareClient();
 }
 
 Form TioWindow::focusedForm() const
@@ -119,7 +129,7 @@ void TioWindow::recomputeDirty()
         || m_form.serial.parity != saved.serial.parity
         || m_form.serial.stopBits != saved.serial.stopBits
         || m_form.serial.flow != saved.serial.flow || m_form.backend != saved.backend
-        || m_form.capture != saved.capture;
+        || m_form.share != saved.share || m_form.sharePort != saved.sharePort;
     if (dirty != m_dirty) {
         m_dirty = dirty;
         emit changed();
@@ -382,7 +392,8 @@ bool TioWindow::canLaunch() const
     // Other tabs' sessions never appear here — the Session gate is per port.
     return core().controller().snapshot().readiness.ready()
         && validate(m_form.serial) == ParamError::None && m_form.parsed().ok()
-        && m_form.backend != Backend::None;
+        && m_form.backend != Backend::None
+        && (!m_form.share || (m_form.sharePort >= 1024 && m_form.sharePort <= 65535));
 }
 
 QString TioWindow::blockedReason() const
@@ -394,6 +405,10 @@ QString TioWindow::blockedReason() const
     // The form, not the saved configuration, decides parameters and backend.
     if (!m_form.parsed().ok() && !readiness.blocking.size())
         readiness.blocking.push_back(Gate::Port);
+    if (m_form.share && (m_form.sharePort < 1024 || m_form.sharePort > 65535)
+        && std::find(readiness.blocking.begin(), readiness.blocking.end(), Gate::SharePort)
+            == readiness.blocking.end())
+        readiness.blocking.push_back(Gate::SharePort);
     return fromStd(gateText(readiness, makeLang(zh())));
 }
 
@@ -553,56 +568,491 @@ bool TioWindow::closeSession(int index)
 
 // ---- the session's content --------------------------------------------------------
 
-bool TioWindow::captureEnabled() const
-{
-    return focusedForm().capture;
-}
+bool TioWindow::shareEnabled() const { return m_form.share; }
+int TioWindow::sharePort() const { return m_form.sharePort; }
 
-// The focused tab's session runs *and* was launched with a log: the file it
-// writes is the only content there is.
-bool TioWindow::sessionCapturing() const
+bool TioWindow::sessionSharing() const
 {
-    const Snapshot snapshot = core().controller().snapshot();
-    for (const SessionView& view : snapshot.sessions)
+    for (const SessionView& view : core().controller().snapshot().sessions)
         if (view.focused)
-            return view.session.active() && !view.session.logPath.empty();
+            return view.session.active() && view.session.sharing;
     return false;
 }
 
-QString TioWindow::capturePath() const
+int TioWindow::sessionSharePort() const
 {
-    const Snapshot snapshot = core().controller().snapshot();
-    for (const SessionView& view : snapshot.sessions)
+    for (const SessionView& view : core().controller().snapshot().sessions)
         if (view.focused)
-            return fromStd(view.session.logPath);
-    return QString();
+            return view.session.sharePort;
+    return 0;
 }
 
-void TioWindow::setCapture(bool on)
+bool TioWindow::shareConnected() const
 {
-    // tio takes --log-file once, when it starts. Turning the switch is still
-    // allowed while a session runs, but it is the next launch that gets it, and
-    // the notice says which launch that is.
-    const bool running = sessionCapturing() || sessionActive();
-    edit([on](Form& form) { form.capture = on; });
-    if (running) {
-        emit notice(on
-            ? (zh() ? "捕获已打开：下一次启动生效（tio 只在启动时接受日志参数）"
-                    : "capture on: it applies to the next launch (tio takes the log flags at launch)")
-            : (zh() ? "捕获已关闭：正在运行的会话仍会写到停止为止"
-                    : "capture off: the running session keeps writing until it stops"));
+    return m_shareClient && m_shareClient->connected();
+}
+
+QString TioWindow::shareContent() const
+{
+    return m_shareContent;
+}
+
+// Rebuilds the copyable text from the same data the view draws: the reduced
+// terminal screen for ascii, the byte dump for hex. Copy and Save use this, so
+// what leaves the window is what the user saw, never a raw escape sequence.
+void TioWindow::refreshShareView()
+{
+    if (!m_shareClient) {
+        m_shareContent.clear();
         return;
     }
-    emit notice(on ? (zh() ? "捕获已打开：启动后 tio 把收发写进本机日志"
-                           : "capture on: once launched, tio writes its traffic to a local log")
-                   : (zh() ? "捕获已关闭" : "capture off"));
+    if (m_shareFormat == "hex") {
+        m_shareContent = fromStd(asHexDump(m_shareClient->tail(128 * 1024), 128 * 1024,
+                                           m_shareHexRow, m_shareHexAscii));
+        return;
+    }
+    QString out;
+    for (const AnsiLine& line : m_shareClient->lines()) {
+        if (!out.isEmpty())
+            out += QLatin1Char('\n');
+        out += fromStd(line.text());
+    }
+    m_shareContent = out;
 }
 
-QString TioWindow::captureTail(int maxBytes) const
+// ASCII shows the bytes as text; HEX shows a classic 16-byte dump. Both are
+// views of the same received bytes, never of a rewrite of them.
+void TioWindow::setShareFormat(const QString& format)
 {
-    if (maxBytes <= 0)
-        maxBytes = 32768;
-    return fromStd(core().controller().captureText(static_cast<std::size_t>(maxBytes)));
+    const QString wanted = format == "hex" ? "hex" : "ascii";
+    if (wanted == m_shareFormat)
+        return;
+    m_shareFormat = wanted;
+    m_shareRevision = 0;
+    refreshShareView();
+    emit changed();
+}
+
+// Bytes per row in the hex view. Only the three widths the view offers are
+// accepted, so a stray value cannot produce a one-byte-per-line dump.
+int TioWindow::shareHexRow() const { return m_shareHexRow; }
+
+void TioWindow::setShareHexRow(int bytes)
+{
+    if (bytes != 8 && bytes != 16 && bytes != 32)
+        return;
+    if (bytes == m_shareHexRow)
+        return;
+    m_shareHexRow = bytes;
+    core().controller().setShareHexRow(bytes);
+    refreshShareView();
+    emit changed();
+}
+
+// The decode column on the right of the hex view: the same bytes as characters,
+// with unprintable ones as '.', which is how a binary frame becomes readable.
+bool TioWindow::shareHexAscii() const { return m_shareHexAscii; }
+
+void TioWindow::setShareHexAscii(bool on)
+{
+    if (on == m_shareHexAscii)
+        return;
+    m_shareHexAscii = on;
+    core().controller().setShareHexAscii(on);
+    refreshShareView();
+    emit changed();
+}
+
+QString TioWindow::shareLogDir() const
+{
+    return QString::fromStdWString(core().controller().shareLogDir());
+}
+
+// The logs already on disk, newest first. The window cannot read the folder
+// itself without the controller's dataDir, and a user who is looking for "where
+// did my log go" should not have to guess a path.
+QVariantList TioWindow::shareLogs() const
+{
+    QVariantList list;
+    const QString dir = shareLogDir();
+    if (dir.isEmpty())
+        return list;
+    const QDir folder(dir);
+    const QFileInfoList files = folder.entryInfoList(QStringList{u"share-*.log"_s},
+        QDir::Files, QDir::Time);
+    for (const QFileInfo& info : files) {
+        QVariantMap item;
+        item["name"] = info.fileName();
+        item["path"] = info.absoluteFilePath();
+        item["bytes"] = static_cast<qulonglong>(info.size());
+        item["time"] = info.lastModified().toString(u"yyyy-MM-dd HH:mm:ss"_s);
+        list << item;
+    }
+    return list;
+}
+
+void TioWindow::openShareLog(const QString& path)
+{
+    if (path.isEmpty())
+        return;
+    QDesktopServices::openUrl(QUrl::fromLocalFile(path));
+}
+
+void TioWindow::openShareLogDir()
+{
+    const QString dir = shareLogDir();
+    if (dir.isEmpty()) {
+        emit notice(zh() ? "还没有日志目录" : "there is no log folder yet");
+        return;
+    }
+    QDesktopServices::openUrl(QUrl::fromLocalFile(dir));
+}
+
+void TioWindow::sharePoll()
+{    if (!m_shareClient)
+        return;
+
+    // Incremental: the log writer and the view both consume new bytes exactly
+    // once, so a long session does not write the whole tail again every tick.
+    const std::string fresh = m_shareClient->consume(m_shareCursor);
+    const bool changedNow = !fresh.empty() || m_shareRevision != m_shareClient->revision();
+    if (!changedNow)
+        return;
+
+    m_shareRevision = m_shareClient->revision();
+    m_shareBytes = static_cast<int>(m_shareClient->totalBytes());
+    m_shareLogBytes += fresh.size();
+    appendShareLog(fresh);
+
+    refreshShareView();
+    emit changed();
+}
+
+// An optional hit log beside tio's own: the received bytes exactly as they came,
+// so the file can be replayed by any tool. It is off until the user turns it on.
+void TioWindow::appendShareLog(const std::string& bytes)
+{
+    if (!m_shareLogOn || bytes.empty())
+        return;
+    if (m_shareLogPath.isEmpty()) {
+        m_shareLogPath = QString::fromStdWString(core().controller().newShareLogPath());
+        if (m_shareLogPath.isEmpty())
+            return;
+    }
+    QFile file(m_shareLogPath);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Append))
+        return;
+    file.write(bytes.data(), static_cast<qint64>(bytes.size()));
+}
+
+void TioWindow::setShareLog(bool on)
+{
+    if (on == m_shareLogOn)
+        return;
+    // Remembered by the controller, so "off" survives a restart instead of
+    // silently coming back on with the next launch.
+    core().controller().setShareLog(on);
+    m_shareLogOn = on;
+    if (!on) {
+        // Keep the file: turning logging off must not throw away what it holds.
+        if (!m_shareLogPath.isEmpty())
+            emit notice(zh() ? "已停止写日志：" + QFileInfo(m_shareLogPath).fileName()
+                             : "stopped logging to " + QFileInfo(m_shareLogPath).fileName());
+        return;
+    }
+    m_shareLogPath.clear();
+    emit notice(zh() ? "开始把共享内容写进 dataDir 的日志"
+                     : "logging the shared content into dataDir");
+    emit changed();
+}
+
+QString TioWindow::shareLogPath() const { return m_shareLogPath; }
+
+// Whether this process may write the clipboard at all.
+//
+// WinShun runs plugins inside a job object and enforces manifest permissions
+// with its UI restrictions: without `clipboard:write` the job carries
+// JOB_OBJECT_UILIMIT_WRITECLIPBOARD, and there SetClipboardData is refused while
+// OpenClipboard and EmptyClipboard still succeed. Emptying the clipboard bumps
+// its sequence number, so "the number moved" is not proof of a copy — it was
+// exactly how a blocked copy came to report success. Asking the job first means
+// a refused write leaves the user's clipboard untouched.
+static bool clipboardWriteAllowed()
+{
+    JOBOBJECT_BASIC_UI_RESTRICTIONS ui{};
+    if (::QueryInformationJobObject(nullptr, JobObjectBasicUIRestrictions, &ui, sizeof ui,
+            nullptr)) {
+        if (ui.UIRestrictionsClass & JOB_OBJECT_UILIMIT_WRITECLIPBOARD)
+            return false;
+    }
+    return true;   // not in a job, or the job allows it
+}
+
+// Writes CF_UNICODETEXT straight into the clipboard.
+//
+// WinShun keeps a clipboard history, so the clipboard is contended: it opens the
+// clipboard whenever the content changes, and a writer in that instant is
+// refused. Qt's QClipboard goes through OLE with delayed rendering, which is
+// worse here — until the owner answers a format request the content looks empty
+// to every other program, including the history that just triggered. This writes
+// the bytes immediately and retries until the clipboard is free. Success is the
+// handle SetClipboardData accepted, which is the only thing that actually proves
+// the text landed.
+static bool writeClipboardText(const QString& text)
+{
+    if (!clipboardWriteAllowed())
+        return false;
+
+    for (int attempt = 0; attempt < 12; ++attempt) {
+        if (::OpenClipboard(nullptr)) {
+            bool stored = false;
+            if (::EmptyClipboard()) {
+                const std::size_t bytes
+                    = (static_cast<std::size_t>(text.size()) + 1) * sizeof(wchar_t);
+                HGLOBAL memory = ::GlobalAlloc(GMEM_MOVEABLE, bytes);
+                if (memory) {
+                    if (void* target = ::GlobalLock(memory)) {
+                        std::memcpy(target, text.utf16(), bytes);
+                        ::GlobalUnlock(memory);
+                        // A successful SetClipboardData hands the block to
+                        // Windows; freeing it here would be a double free.
+                        if (::SetClipboardData(CF_UNICODETEXT, memory)) {
+                            stored = true;
+                            memory = nullptr;
+                        }
+                    }
+                    if (memory)
+                        ::GlobalFree(memory);
+                }
+            }
+            ::CloseClipboard();
+            if (stored)
+                return true;
+        }
+        // Someone held the clipboard; wait a little longer each time.
+        ::Sleep(static_cast<DWORD>(10 + attempt * 15));
+    }
+    return false;
+}
+
+// A refusal that names the real cause: a missing permission needs the user to
+// act in WinShun, a busy clipboard only needs another try.
+static QString copyFailureText(bool chinese)
+{
+    if (!clipboardWriteAllowed())
+        return chinese
+            ? "复制失败：WinShun 没有给本插件剪贴板写入权限。请在 WinShun 里重新启用这个插件并允许「剪贴板」。"
+            : "copy failed: WinShun has not granted this plugin clipboard write access. Re-enable the plugin in WinShun and allow Clipboard.";
+    return chinese ? "复制失败：剪贴板正被其他程序占用，请稍后重试"
+                   : "copy failed: another program is holding the clipboard";
+}
+
+// Copies what the view shows (terminal text or the byte dump).
+//
+// WinShun keeps a clipboard history, so the clipboard is a contended resource:
+// it opens the clipboard whenever the content changes, and anything that reads
+// or writes it in that instant is refused. Two consequences shaped this:
+//
+//   * the write is raw Win32, not QClipboard (see writeClipboardText above).
+//   * success is the handle SetClipboardData accepted, never the sequence number:
+//     under WinShun's job restrictions EmptyClipboard still bumps that number.
+void TioWindow::copyShareContent()
+{
+    const QString text = shareContent();
+    if (text.isEmpty()) {
+        emit notice(zh() ? "还没有内容可复制" : "there is nothing to copy yet");
+        return;
+    }
+    if (!writeClipboardText(text)) {
+        emit notice(copyFailureText(zh()));
+        return;
+    }
+    emit notice(zh() ? "已复制 " + QString::number(text.size()) + " 个字符"
+                     : "copied " + QString::number(text.size()) + " characters");
+}
+
+
+// A Save dialog, because the host's Qt has no QuickDialogs (comdlg32 ships with
+// Windows and is the dialog every editor on this machine shows).
+bool TioWindow::saveShareContent()
+{
+    const QString text = shareContent();
+    if (text.isEmpty()) {
+        emit notice(zh() ? "还没有内容可保存" : "there is nothing to save yet");
+        return false;
+    }
+
+    wchar_t path[MAX_PATH] = L"tio-share.txt";
+    OPENFILENAMEW ofn{};
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = GetActiveWindow();
+    ofn.lpstrFilter = L"Text (*.txt)\0*.txt\0All files (*.*)\0*.*\0";
+    ofn.lpstrFile = path;
+    ofn.nMaxFile = MAX_PATH;
+    ofn.lpstrDefExt = L"txt";
+    ofn.lpstrTitle = zh() ? L"保存共享内容" : L"Save shared content";
+    ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
+    if (!GetSaveFileNameW(&ofn))
+        return false;
+
+    const QString target = QString::fromWCharArray(path);
+    QFile file(target);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        emit notice(zh() ? "写不进这个文件：" + QFileInfo(target).fileName()
+                         : "could not write " + QFileInfo(target).fileName());
+        return false;
+    }
+    file.write(text.toUtf8());
+    file.close();
+    emit notice(zh() ? "已保存为 " + QFileInfo(target).fileName()
+                     : "saved as " + QFileInfo(target).fileName());
+    return true;
+}
+
+// The terminal screen, as rows of styled runs. Colour is a #RRGGBB string, or
+// empty for the theme's default; the view maps it straight onto Text colour.
+//
+// A palette colour (SGR 30..37 / 90..97) is resolved here rather than in the
+// reducer, because only the window knows whether the background is light or
+// dark: colour 0 is near-black, and near-black on a dark theme is invisible.
+// On a dark background the 8 dim entries are swapped for their bright variants.
+QVariantList TioWindow::shareLines() const
+{
+    QVariantList rows;
+    if (!m_shareClient)
+        return rows;
+
+    const bool onDark = dark();
+    const auto resolve = [onDark](int rgb, int index) -> QString {
+        if (index < 0)
+            return rgb < 0 ? QString()
+                           : QString("#%1").arg(rgb, 6, 16, QChar('0'));
+        const int slot = index < 8 && onDark ? index + 8 : index;
+        return QString("#%1").arg(kAnsiPalette[slot], 6, 16, QChar('0'));
+    };
+
+    const std::vector<AnsiLine> screen = m_shareClient->lines();
+    for (const AnsiLine& line : screen) {
+        QVariantList spans;
+        for (const AnsiSpan& span : line.spans) {
+            if (span.text.empty())
+                continue;
+            QVariantMap item;
+            item["text"] = fromStd(span.text);
+            item["color"] = resolve(span.color, span.colorIndex);
+            item["background"] = resolve(span.background, span.backgroundIndex);
+            item["bold"] = span.bold;
+            item["inverse"] = span.inverse;
+            spans << item;
+        }
+        QVariantMap row;
+        row["spans"] = spans;
+        rows << row;
+    }
+    return rows;
+}
+
+void TioWindow::clearShareContent()
+{
+    if (m_shareClient)
+        m_shareClient->clear();
+    m_shareContent.clear();
+    emit changed();
+}
+
+void TioWindow::syncShareClient()
+{
+    const bool sharing = sessionSharing();
+    const int port = sessionSharePort();
+    if (!sharing) {
+        if (m_shareClient) {
+            m_shareClient->stop();
+            m_shareClient.reset();
+        }
+        m_shareClientPort = 0;
+        m_shareCursor = 0;
+        m_shareRevision = 0;
+        m_shareBytes = 0;
+        if (!m_shareContent.isEmpty()) {
+            m_shareContent.clear();
+            emit changed();
+        }
+        return;
+    }
+    if (m_shareClient && m_shareClient->running() && m_shareClientPort == port)
+        return;
+    if (!m_shareClient)
+        m_shareClient = std::make_unique<ShareClient>();
+    if (!m_shareClient->start("127.0.0.1", static_cast<std::uint16_t>(port)))
+        m_shareClientPort = 0;
+    else
+        m_shareClientPort = port;
+    // A fresh consumer counts from zero again: keeping the old cursor would put
+    // it past the new stream and nothing would ever be read.
+    m_shareCursor = 0;
+    m_shareRevision = 0;
+    m_shareBytes = 0;
+    m_shareContent.clear();
+    emit changed();
+}
+
+void TioWindow::setShareEnabled(bool enabled)
+{
+    if (sessionActive()) {
+        emit notice(zh() ? "请先停止会话，再更改远程共享" : "stop the session before changing remote sharing");
+        emit changed();
+        return;
+    }
+    edit([enabled](Form& form) { form.share = enabled; });
+    emit changed();
+}
+
+void TioWindow::setShareReadOnly(bool readOnly)
+{
+    m_shareReadOnly = readOnly;
+    if (m_shareClient)
+        m_shareClient->setReadOnly(readOnly);
+    emit notice(readOnly
+        ? (zh() ? "共享内容只读：窗口不会向串口写字节" : "read-only: the window writes nothing to the serial device")
+        : (zh() ? "已允许窗口向共享串口写入" : "the window may now write to the shared serial device"));
+    emit changed();
+}
+
+void TioWindow::copySharePort()
+{
+    // Same contended clipboard as the content: WinShun's history opens it on
+    // every change, so this goes through the raw writer too.
+    if (!writeClipboardText(QString::number(sharePort()))) {
+        emit notice(copyFailureText(zh()));
+        return;
+    }
+    emit notice(zh() ? "Socket 端口已复制" : "Socket port copied");
+}
+
+// The port is a setting, so it is validated here rather than at the SpinBox:
+// the same rule protects the search box, a hand-edited tio.json and the plan.
+bool TioWindow::setSharePort(int port)
+{
+    if (sessionActive()) {
+        emit notice(zh() ? "请先停止会话，再更改共享端口"
+                         : "stop the session before changing the shared port");
+        emit changed();
+        return false;
+    }
+    if (port < 1024 || port > 65535) {
+        emit notice(zh() ? "共享端口范围是 1024 到 65535"
+                         : "The shared port must be between 1024 and 65535");
+        emit changed();
+        return false;
+    }
+    if (port == m_form.sharePort)
+        return true;
+    edit([port](Form& form) { form.sharePort = port; });
+    // The consumer must follow the configured endpoint. If a session is not
+    // running nothing connects yet; the next launch will use this port.
+    syncShareClient();
+    emit changed();
+    return true;
 }
 
 void TioWindow::trace(const QString& text)
@@ -618,59 +1068,6 @@ void TioWindow::trace(const QString& text)
     }
     std::fprintf(stderr, "tio: trace %s\n", qUtf8Printable(text));
     std::fflush(stderr);
-}
-
-void TioWindow::copyCapture()
-{
-    const QString text = captureTail(1 << 20);
-    if (text.isEmpty()) {
-        emit notice(zh() ? "还没有内容：先启动会话并打开捕获"
-                         : "nothing captured yet: launch the session with capture on");
-        return;
-    }
-    if (QClipboard* clipboard = QGuiApplication::clipboard()) {
-        clipboard->setText(text);
-        emit notice(zh() ? "已复制本次捕获的内容" : "Copied what this session captured");
-    }
-}
-
-// A save dialog, because the host's Qt has no QuickDialogs (C:\Program
-// Files\WinShun\qml\QtQuick\Dialogs is an empty stub): comdlg32 ships with
-// Windows, and the dialog is the one every text editor on this machine shows.
-bool TioWindow::saveCapture()
-{
-    const QString text = captureTail(1 << 20);
-    if (text.isEmpty()) {
-        emit notice(zh() ? "还没有内容：先启动会话并打开捕获"
-                         : "nothing captured yet: launch the session with capture on");
-        return false;
-    }
-
-    wchar_t path[MAX_PATH] = L"tio-capture.txt";
-    OPENFILENAMEW ofn{};
-    ofn.lStructSize = sizeof(ofn);
-    ofn.hwndOwner = GetActiveWindow();
-    ofn.lpstrFilter = L"Text (*.txt)\0*.txt\0All files (*.*)\0*.*\0";
-    ofn.lpstrFile = path;
-    ofn.nMaxFile = MAX_PATH;
-    ofn.lpstrDefExt = L"txt";
-    ofn.lpstrTitle = zh() ? L"另存为文本" : L"Save as text";
-    ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
-    if (!GetSaveFileNameW(&ofn))
-        return false;  // cancelled: nothing to report, nothing changed
-
-    const QString target = QString::fromWCharArray(path);
-    QFile file(target);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        emit notice(zh() ? "写不进这个文件：" + QFileInfo(target).fileName()
-                         : "could not write " + QFileInfo(target).fileName());
-        return false;
-    }
-    file.write(text.toUtf8());
-    file.close();
-    emit notice(zh() ? "已另存为 " + QFileInfo(target).fileName()
-                     : "saved as " + QFileInfo(target).fileName());
-    return true;
 }
 
 // ---- card folding (TIO-008) -------------------------------------------------------
@@ -800,14 +1197,14 @@ bool TioWindow::save()
     return true;
 }
 
-bool TioWindow::launch()
+bool TioWindow::launch(bool allowRemoteShare)
 {
     // Launch binds (or reuses) the tab for the port on screen, and saves the
     // parameters first so the search box agrees afterwards. Other tabs'
     // sessions are unaffected: one port carries one process, and this port is
     // this tab's.
     std::string error;
-    const bool started = core().controller().launch(m_form, error);
+    const bool started = core().controller().launch(m_form, error, allowRemoteShare);
     if (!started) {
         // The same sentence the footer and the toast show, so the reason is in
         // one place and in the user's language.
@@ -831,12 +1228,19 @@ void TioWindow::stop()
     emit changed();
 }
 
-void TioWindow::restart()
+void TioWindow::restart(bool allowRemoteShare)
 {
     // Stop waits for the graceful timeout, so the port is free again when the
     // launch follows; the same form restarts on the same port.
+    const bool share = sessionSharing();
+    if (share && !allowRemoteShare) {
+        emit notice(zh() ? "重启将重新开放远程串口；请先确认" :
+            "Restart will reopen remote serial access; confirm first");
+        return;
+    }
     stop();
-    launch();
+    m_form.share = share && allowRemoteShare;
+    launch(share && allowRemoteShare);
 }
 
 QString TioWindow::diagnostics() const
@@ -846,10 +1250,11 @@ QString TioWindow::diagnostics() const
 
 void TioWindow::copyDiagnostics()
 {
-    if (QClipboard* clipboard = QGuiApplication::clipboard()) {
-        clipboard->setText(diagnostics());
-        emit notice(zh() ? "诊断已复制" : "Diagnostics copied");
+    if (!writeClipboardText(diagnostics())) {
+        emit notice(copyFailureText(zh()));
+        return;
     }
+    emit notice(zh() ? "诊断已复制" : "Diagnostics copied");
 }
 
 // ---- the process-wide model and the window hook ------------------------------------

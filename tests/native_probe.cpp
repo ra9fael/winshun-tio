@@ -60,6 +60,33 @@ Spawn spawn(DWORD flags, const std::wstring& commandLine, const std::wstring& ru
 
 int main(int argc, char** argv)
 {
+    if (argc >= 2 && std::string(argv[1]) == "--share-port") {
+        WSADATA data{};
+        if (::WSAStartup(MAKEWORD(2, 2), &data) != 0)
+            return 2;
+        SOCKET blocker = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        sockaddr_in address{};
+        address.sin_family = AF_INET;
+        address.sin_addr.s_addr = htonl(INADDR_ANY);
+        address.sin_port = htons(0);
+        const bool bound = blocker != INVALID_SOCKET
+            && ::bind(blocker, reinterpret_cast<const sockaddr*>(&address), sizeof address) == 0;
+        int length = sizeof address;
+        if (bound)
+            ::getsockname(blocker, reinterpret_cast<sockaddr*>(&address), &length);
+        const int port = ntohs(address.sin_port);
+        std::string error;
+        const bool rejectedBusy = bound && !tioplug::sharedSocketPortAvailable(port, error);
+        if (blocker != INVALID_SOCKET)
+            ::closesocket(blocker);
+        std::string freeError;
+        const bool acceptedFree = tioplug::sharedSocketPortAvailable(port, freeError);
+        ::WSACleanup();
+        report(bound && rejectedBusy, "an occupied share port is rejected", error);
+        report(acceptedFree, "an available share port passes preflight", freeError);
+        return rejectedBusy && acceptedFree ? 0 : 1;
+    }
+
     // An absolute plugin dir: the wt backend passes the tio path inside a command
     // line that Windows Terminal resolves against its own working directory, so a
     // relative path there would start nothing.

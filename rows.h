@@ -119,6 +119,7 @@ inline std::string gateText(const Readiness& readiness, const Lang& lang)
         switch (gate) {
         case Gate::Port: why += lang.zh ? "端口" : "port"; break;
         case Gate::PortBusy: why += lang.zh ? "端口已被占用" : "port busy"; break;
+        case Gate::SharePort: why += lang.zh ? "共享端口需为 1–65535" : "shared port must be 1–65535"; break;
         case Gate::Parameters: why += lang.zh ? "参数" : "parameters"; break;
         case Gate::Identity: why += lang.zh ? "设备身份" : "identity"; break;
         case Gate::Package: why += lang.zh ? "完整性" : "integrity"; break;

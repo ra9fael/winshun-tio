@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.1.3] - 2026-11-14
+
+### Shared serial viewer, terminal rendering, and clipboard permissions
+
+- The standalone window has a separate shared-content card with an always-visible scrollbar; wheel events stay in the terminal at its top and bottom.
+- ASCII terminal rendering handles ANSI colours, including xterm 256-colour, background, bold and reverse video. HEX rows are configurable (8/16/32 bytes), with an optional printable-byte decode column; the meaningless sliding-window offset column is removed.
+- Copy and Save as use the text shown in the current view. Clipboard writes use Win32 immediate Unicode data and verify `SetClipboardData`; copying port and diagnostics use the same path. The manifest now requests `clipboard:write` so WinShun's plugin job permits the operation. First enable/update requires approving this additional permission.
+- Auto-logging is enabled by default and its preference persists. The sharing card has a log-history dialog that lists existing logs and opens a log or its folder.
+- Fixes CR overwrite, session-restart receive cursors, and log-history live refresh; adds loopback, ANSI, clipboard and wheel regression probes.
+
+
+### Bidirectional remote serial sharing
+
+- Replaces file-log capture and the plugin-owned read-only mirror with tio's native `-S inet:<port>` in the standalone window's advanced section.
+- **On by default.** The port defaults to `54321` and can be set to anything in `1024-65535`, from the plugin settings or the standalone window; a change needs a session restart.
+- The window is also a read-only consumer: it connects to `127.0.0.1:<port>` and shows what the shared session receives (last 128 KB, with Clear). It never sends, so it cannot write the serial port.
+- Search-box launches never enable sharing, so one Enter cannot open LAN write access. The switch is saved with the configuration and can be turned off in the window.
+- Warns that the port listens on all interfaces, LAN clients can write to the serial device, WT and remote clients share one session, and a slow client may stall tio.
+- Requests `network:listen` for TCP `1024-65535`, preflights port availability, and detects tio exiting during startup.
+
 ## [0.1.2] - 2026-11-12
 
 ### Fixes (clone, capture wording, search-box ports)

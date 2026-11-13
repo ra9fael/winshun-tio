@@ -11,6 +11,7 @@
 
 #include <QCoreApplication>
 #include <QDir>
+#include <QFile>
 #include <QVariant>
 
 #include <cstdio>
@@ -288,30 +289,97 @@ static void testSessionTabs()
         "the focus fell back to the remaining tab");
 }
 
-// Capture is decided before the launch, because tio takes --log-file once, at
-// launch. The switch is the form's, so it saves and reloads like any parameter,
-// and an idle session has nothing to show.
-static void testCaptureSwitch()
+// Sharing is on by default; both the switch and the port are settings the
+// standalone window can change, and the port must survive a reload.
+static void testRemoteShareSettings()
 {
     TioWindow model;
     model.refresh();
 
-    const bool before = model.captureEnabled();
-    model.setCapture(!before);
-    CHECK(model.captureEnabled() == !before, "the capture switch took the edit");
-    CHECK(model.dirty(), "the switch makes the form dirty");
-    CHECK(!model.sessionCapturing(), "an idle session captures nothing");
-    CHECK(model.capturePath().isEmpty(), "an idle session has no log yet");
-    CHECK(model.captureTail(4096).isEmpty(), "there is nothing to read yet",
-        model.captureTail(4096).toStdString());
+    CHECK(model.shareEnabled(), "serial sharing is enabled by default");
+    CHECK(model.sharePort() == 54321, "the default shared port is 54321");
 
-    CHECK(model.save(), "the switch is saved with the configuration");
+    CHECK(model.setSharePort(54322), "the shared port accepts a valid value");
+    CHECK(model.sharePort() == 54322, "the shared port changed");
+    CHECK(!model.setSharePort(80), "a privileged port is refused");
+    CHECK(model.sharePort() == 54322, "the refused port leaves the value alone");
+    CHECK(model.dirty(), "a port edit makes the form dirty");
+
+    CHECK(model.save(), "the sharing settings are saved");
     reload(model);
-    CHECK(model.captureEnabled() == !before, "the switch survives a reload");
+    CHECK(model.shareEnabled(), "sharing survives a reload");
+    CHECK(model.sharePort() == 54322, "the shared port survives a reload");
+    CHECK(!model.dirty(), "the saved sharing settings are clean");
 
-    model.setCapture(before);
-    CHECK(model.captureEnabled() == before, "the switch goes back");
+    model.setShareEnabled(false);
+    CHECK(!model.shareEnabled(), "sharing can be turned off");
+    CHECK(model.save(), "turning sharing off is saved");
+    reload(model);
+    CHECK(!model.shareEnabled(), "sharing stays off after reload");
+    model.setSharePort(54321);
+    model.setShareEnabled(true);
     model.save();
+}
+
+// The shared-content panel: the format toggle, the write gate, and the fact that
+// asking to copy or save with nothing received is refused rather than silent.
+static void testSharedContentPanel()
+{
+    TioWindow model;
+    model.refresh();
+
+    CHECK(model.shareFormat() == "ascii", "the content view starts in ascii format");
+    model.setShareFormat("hex");
+    CHECK(model.shareFormat() == "hex", "the view switches to hex");
+    model.setShareFormat("bogus");
+    CHECK(model.shareFormat() == "ascii", "an unknown format falls back to ascii");
+
+    CHECK(model.shareReadOnly(), "the shared connection starts read-only");
+    model.setShareReadOnly(false);
+    CHECK(!model.shareReadOnly(), "the write gate can be opened");
+    model.setShareReadOnly(true);
+    CHECK(model.shareReadOnly(), "the write gate closes again");
+
+    // Logging defaults to on: an unattended serial session is what a log is for.
+    CHECK(model.shareLogEnabled(), "auto-logging is on by default");
+    CHECK(model.shareLogPath().isEmpty(), "no log file exists before the first byte");
+    model.setShareLog(false);
+    CHECK(!model.shareLogEnabled(), "auto-logging can be turned off");
+    // Turning it off must survive a reload, or the switch looks broken: it would
+    // silently come back on with the next refresh.
+    reload(model);
+    CHECK(!model.shareLogEnabled(), "turning logging off is remembered");
+    model.setShareLog(true);
+    CHECK(model.shareLogEnabled(), "auto-logging can be turned back on");
+    reload(model);
+    CHECK(model.shareLogEnabled(), "turning logging on is remembered too");
+
+    CHECK(model.shareLines().isEmpty(), "nothing is drawn before a session runs");
+    CHECK(model.shareBytes() == 0, "no bytes are counted before a session runs");
+    CHECK(!model.saveShareContent(), "Save as refuses when there is nothing to save");
+
+    // The hex view's shape: three widths, remembered like the log switch.
+    CHECK(model.shareHexRow() == 16, "the hex view starts at 16 bytes per row");
+    model.setShareHexRow(8);
+    CHECK(model.shareHexRow() == 8, "the hex row width can be changed");
+    model.setShareHexRow(7);
+    CHECK(model.shareHexRow() == 8, "a width the view does not offer is refused");
+    reload(model);
+    CHECK(model.shareHexRow() == 8, "the hex row width survives a reload");
+
+    CHECK(!model.shareHexAscii(), "the decode column starts off");
+    model.setShareHexAscii(true);
+    CHECK(model.shareHexAscii(), "the decode column can be turned on");
+    reload(model);
+    CHECK(model.shareHexAscii(), "the decode column choice survives a reload");
+    model.setShareHexAscii(false);
+
+    // Log history: the folder is where the logs live, and nothing is listed
+    // before one has been written.
+    CHECK(!model.shareLogDir().isEmpty(), "the log folder is known");
+    CHECK(model.shareLogDir().endsWith("sessions"), "the log folder is dataDir\\sessions",
+        model.shareLogDir().toStdString());
+    CHECK(model.shareLogs().isEmpty(), "no logs are listed before anything is written");
 }
 
 static void testOutsideChange()
@@ -393,7 +461,8 @@ static void testDiagnostics()
     const QString text = model.diagnostics();
     CHECK(text.contains("ra9fael.tio"), "the diagnostics name the plugin");
     CHECK(text.contains("integrity"), "the diagnostics report integrity");
-    CHECK(text.contains("no serial payload"), "the diagnostics state the privacy boundary");
+    CHECK(text.contains("remote socket clients can write"),
+        "the diagnostics warn that remote clients can write");
     CHECK(!text.contains("connected"), "the diagnostics never claim a connection",
         text.toStdString());
 }
@@ -412,7 +481,8 @@ int main(int argc, char** argv)
         testEditing();
         testPortSelection();
         testSessionTabs();
-        testCaptureSwitch();
+        testRemoteShareSettings();
+        testSharedContentPanel();
         testOutsideChange();
         testBackendChoice();
         testLaunchGate();

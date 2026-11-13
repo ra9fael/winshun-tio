@@ -71,6 +71,10 @@ BASE_FILES = [
     "qmlapp/ThemeBridge.h",
     "qmlapp/TioWindow.h",
     "qmlapp/TioWindow.cpp",
+    "qmlapp/ShareClient.h",
+    "qmlapp/ShareClient.cpp",
+    "qmlapp/AnsiText.h",
+    "qmlapp/AnsiText.cpp",
     "qmlapp/stub/main.cpp",
     "qmlapp/qml/TioWindow.qml",
     "qmlapp/qml/DesignTokens.qml",
@@ -89,6 +93,18 @@ BASE_FILES = [
     "tests/test_window.cpp",
     "tools/package.py",
     "tools/copy_qt_dlls.cmake",
+    "tools/remote_share_gui.ps1",
+    "tools/probe_share.py",
+    "tools/probe_share_client.cpp",
+    "tools/probe_ansi.cpp",
+    "tools/probe_share_view.py",
+    "tools/probe_wheel.py",
+    "tools/probe_click.py",
+    "tools/probe_clipboard.py",
+    "tools/probe_clipboard_perm.py",
+    "tools/check_share_socket.py",
+    "tests/test_share_client.cpp",
+    "tests/test_ansi_text.cpp",
 ]
 
 
@@ -126,17 +142,18 @@ def third_party_files() -> list[str]:
     return sorted(wanted)
 
 
-def archive(names: list[str]) -> bytes:
+def archive(names: list[str], overrides: dict[str, bytes] | None = None) -> bytes:
     output = io.BytesIO()
+    overrides = overrides or {}
     with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_STORED) as zf:
         for name in sorted(set(names)):
             source = (ROOT / name).resolve()
-            if not source.is_relative_to(ROOT.resolve()) or not source.is_file():
+            if not source.is_relative_to(ROOT.resolve()) or (not source.is_file() and name not in overrides):
                 raise ValueError(f"invalid package source: {name}")
             info = zipfile.ZipInfo(name, (2020, 1, 1, 0, 0, 0))
             info.create_system = 3
             info.external_attr = 0o100644 << 16
-            zf.writestr(info, source.read_bytes())
+            zf.writestr(info, overrides[name] if name in overrides else source.read_bytes())
     return output.getvalue()
 
 
@@ -145,6 +162,11 @@ def main() -> int:
     parser.add_argument("--dev", action="store_true", help="package the working tree")
     parser.add_argument("--tag", help="release tag, must be v<version>")
     parser.add_argument("--out", type=pathlib.Path, default=ROOT / "dist" / "development")
+    parser.add_argument(
+        "--artifact-dir",
+        type=pathlib.Path,
+        help="directory containing the freshly built tio.exe and TioApp.dll",
+    )
     args = parser.parse_args()
 
     manifest = json.loads((ROOT / "plugin.json").read_text(encoding="utf8"))
@@ -170,14 +192,18 @@ def main() -> int:
 
     # Both binaries must exist before anything is packaged: shipping a package
     # the host cannot start is worse than failing here.
+    artifact_dir = (args.artifact_dir or ROOT).resolve()
+    binaries = {}
     for name in ("tio.exe", "TioApp.dll"):
-        if not (ROOT / name).is_file():
-            raise ValueError(f"missing build output: {name} (build first)")
+        source = artifact_dir / name
+        if not source.is_file():
+            raise ValueError(f"missing build output: {source} (build first)")
+        binaries[name] = source
 
     # The runtime payload must verify before anything is packaged: shipping a
     # package the launcher would refuse is worse than failing here.
     probe = subprocess.run(
-        [str(ROOT / "tio.exe"), "--probe", "verify", str(ROOT)],
+        [str(binaries["tio.exe"]), "--probe", "verify", str(ROOT)],
         cwd=ROOT,
         capture_output=True,
         text=True,
@@ -186,7 +212,10 @@ def main() -> int:
         raise ValueError("the packaged runtime does not verify:\n" + probe.stdout + probe.stderr)
 
     names = BASE_FILES + runtime_files() + licence_files() + third_party_files()
-    payload = archive(names)
+    # Keep the archive rooted in the source tree while allowing an isolated
+    # build to supply the two binaries without touching existing root outputs.
+    payload = archive(names, {name: source.read_bytes() for name, source in binaries.items()
+                              if source.resolve() != (ROOT / name).resolve()})
     digest = hashlib.sha256(payload).hexdigest()
 
     args.out.mkdir(parents=True, exist_ok=True)

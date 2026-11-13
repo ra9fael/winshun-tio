@@ -339,6 +339,7 @@ enum class PlanError {
     Port,
     Parameters,
     PackagePath, // holds ';' or '|', which wt cannot take
+    SharePort,
 };
 
 struct Plan {
@@ -352,11 +353,10 @@ struct Plan {
 // tio's own arguments. `--no-reconnect` is deliberate: the launcher owns
 // reconnect policy (TIO-010), and tio's automatic reconnect would silently
 // follow a reused COM number.
-// If the session writes its content to a log file, this is that file: tio's own
-// --log-file target inside dataDir. Empty when the session records nothing.
-// The launcher never reads the port itself: it only reads this file back.
+// When sharing is enabled, tio owns the socket and keeps the terminal and
+// remote clients on the same bidirectional I/O path.
 inline std::vector<std::string> tioArguments(const Port& port, const Serial& serial,
-    const std::string& logFile = std::string())
+    bool share = false, int sharePort = 0)
 {
     std::vector<std::string> args = {
         "-n",
@@ -366,15 +366,9 @@ inline std::vector<std::string> tioArguments(const Port& port, const Serial& ser
         "-s", std::to_string(serial.stopBits),
         "-f", flowName(serial.flow),
     };
-    if (!logFile.empty()) {
-        // tio owns the file: it strips escape sequences so what is read back is
-        // the text the terminal showed, and appending keeps a restart from
-        // erasing what the previous run captured.
-        args.push_back("-L");
-        args.push_back("--log-file");
-        args.push_back(logFile);
-        args.push_back("--log-append");
-        args.push_back("--log-strip");
+    if (share) {
+        args.push_back("-S");
+        args.push_back("inet:" + std::to_string(sharePort));
     }
     args.push_back(port.ok() ? port.device() : std::string());
     return args;
@@ -385,7 +379,7 @@ inline std::vector<std::string> tioArguments(const Port& port, const Serial& ser
 // the process to the resident Windows Terminal.
 inline Plan planLaunch(Backend backend, const std::string& wtBin, const std::string& tioExe,
                        const Port& port, const Serial& serial, const std::string& token,
-                       const std::string& logFile = std::string())
+                       bool share = false, int sharePort = 0)
 {
     Plan plan;
     plan.backend = backend;
@@ -397,13 +391,17 @@ inline Plan planLaunch(Backend backend, const std::string& wtBin, const std::str
         plan.error = PlanError::Parameters;
         return plan;
     }
+    if (share && (sharePort < 1024 || sharePort > 65535)) {
+        plan.error = PlanError::SharePort;
+        return plan;
+    }
     if (backend == Backend::None) {
         plan.error = PlanError::Port;
         return plan;
     }
 
     plan.tio.push_back(tioExe);
-    for (const std::string& arg : tioArguments(port, serial, logFile))
+    for (const std::string& arg : tioArguments(port, serial, share, sharePort))
         plan.tio.push_back(arg);
 
     if (backend == Backend::Conhost) {
@@ -488,7 +486,8 @@ struct Session {
     std::uint64_t created = 0;     // process creation time, guards PID reuse
     std::string token;             // per-session id, also in the wt title
     std::string device;
-    std::string logPath;           // tio's --log-file target, empty without capture
+    bool sharing = false;
+    int sharePort = 0;
 
     bool active() const
     {
@@ -505,11 +504,11 @@ struct Form {
     std::wstring port;
     Serial serial;
     Backend backend = Backend::None;
-    // When set, this session is started with tio's own log to a file in
-    // dataDir, and the window may read those lines back. Off by default: the
-    // launcher records nothing the user did not ask for, and the screen is the
-    // only place a session's content normally exists.
-    bool capture = false;
+    // When set, tio opens its bidirectional inet socket at launch. The terminal
+    // and remote clients then share the same serial session. On by default: the
+    // window is the local consumer and the user can turn it off explicitly.
+    bool share = true;
+    int sharePort = 54321;
 
     Port parsed() const;
 };
@@ -599,6 +598,7 @@ inline bool ownedProcess(const Session& s, std::uint32_t pid, std::uint64_t crea
 enum class Gate {
     Port,       // the name parses and maps
     PortBusy,   // another tab's running session owns this port
+    SharePort,  // the optional shared socket port is valid
     Parameters, // the serial values are in range
     Identity,   // the device snapshot still matches
     Package,    // every packaged file hashes as recorded
@@ -614,6 +614,8 @@ struct Readiness {
 struct Environment {
     Port port;
     bool portBusyByOther = false;
+    bool shareEnabled = false;
+    int sharePort = 54321;
     Serial serial;
     bool identityKnown = true;
     bool packageValid = true;
@@ -628,6 +630,8 @@ inline Readiness check(const Environment& env)
         readiness.blocking.push_back(Gate::Port);
     else if (env.portBusyByOther)
         readiness.blocking.push_back(Gate::PortBusy);
+    if (env.shareEnabled && (env.sharePort < 1024 || env.sharePort > 65535))
+        readiness.blocking.push_back(Gate::SharePort);
     if (validate(env.serial) != ParamError::None)
         readiness.blocking.push_back(Gate::Parameters);
     if (!env.identityKnown)
@@ -646,6 +650,7 @@ inline const char* gateId(Gate gate)
     switch (gate) {
     case Gate::Port: return "port";
     case Gate::PortBusy: return "portBusy";
+    case Gate::SharePort: return "sharePort";
     case Gate::Parameters: return "parameters";
     case Gate::Identity: return "identity";
     case Gate::Package: return "package";

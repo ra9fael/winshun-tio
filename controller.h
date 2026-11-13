@@ -178,6 +178,8 @@ public:
         out.port = m_form.parsed();
         out.serial = m_form.serial;
         out.backend = m_form.backend;
+        out.share = m_form.share;
+        out.sharePort = m_form.sharePort;
         out.backends = m_backends;
         out.package = m_package;
         out.ports = m_ports;
@@ -291,8 +293,8 @@ public:
     // refused here and only here: a tab may be prepared before its port is
     // chosen, but nothing starts without one. `error` is UTF-8 and already
     // neutral ("wt started no tio process"), never a localized sentence:
-    // callers localize.
-    bool launch(const Form& form, std::string& error)
+    // callers localize. Sharing is on unless the form or caller turns it off.
+    bool launch(const Form& form, std::string& error, bool allowRemoteShare = true)
     {
         error.clear();
         Plan plan;
@@ -328,39 +330,47 @@ public:
                 // The configuration the launch uses is the one that persists:
                 // what started and what the next query shows must not differ.
                 m_form = tab->form;
+                // The search-box launch passes false and stays local; the
+                // standalone window passes its own setting through.
+                Form launchForm = tab->form;
+                launchForm.share = tab->form.share && allowRemoteShare;
                 writeSettingsLocked();
                 refreshIdentityLocked();
 
                 if (!readinessLocked(*tab).ready()) {
                     error = "a pre-launch check did not pass";
                     m_error = L"";
+                } else if (launchForm.share
+                    && !sharedSocketPortAvailable(launchForm.sharePort, error)) {
+                    m_error = winshun::wide(error);
+                    m_errorCode = error;
                 } else if (!beginValidation(tab->session)) {
                     error = "a session is already active";
                     m_error = L"";
                 } else {
                     const std::string token = newToken();
                     const Port port = tab->form.parsed();
-                    // Capture is a launch argument, not a runtime switch: tio can
-                    // only start logging to a file. The file lives in the
-                    // launcher's own dataDir, so reading it back never opens the
-                    // serial port a second time, and closing the tab removes it.
-                    const std::string logFile = tab->form.capture ? capturePathLocked(token) : std::string();
                     tab->session.com = port.com;
                     tab->session.device = port.device();
                     tab->session.token = token;
-                    tab->session.logPath.clear();
+                    tab->session.sharing = launchForm.share;
+                    tab->session.sharePort = launchForm.sharePort;
 
                     const std::wstring wtPath = findOnPath(L"wt.exe");
                     const std::wstring tioPath = m_runtimeDir + L"\\tio.exe";
-                    plan = planLaunch(tab->form.backend,
+                    plan = planLaunch(launchForm.backend,
                         wtPath.empty() ? std::string() : winshun::utf8(wtPath),
-                        winshun::utf8(tioPath), port, tab->form.serial, token, logFile);
+                        winshun::utf8(tioPath), port, launchForm.serial, token,
+                        launchForm.share, launchForm.sharePort);
 
                     if (plan.error != PlanError::None) {
                         markFailed(tab->session, PortState::Unknown);
-                        error = plan.error == PlanError::PackagePath
-                            ? "the plugin path holds a character Windows Terminal treats as a separator"
-                            : "the launch arguments are invalid";
+                        if (plan.error == PlanError::PackagePath)
+                            error = "the plugin path holds a character Windows Terminal treats as a separator";
+                        else if (plan.error == PlanError::SharePort)
+                            error = "the shared socket port must be between 1 and 65535";
+                        else
+                            error = "the launch arguments are invalid";
                     } else if (plan.backend == Backend::None) {
                         markFailed(tab->session, PortState::Unknown);
                         error = "no usable backend";
@@ -368,7 +378,6 @@ public:
                         context.pluginDir = m_pluginDir;
                         context.runtimeDir = m_runtimeDir;
                         context.workDir = winshun::wide(m_dataDir);
-                        tab->session.logPath = logFile;
                         beginStart(tab->session);
                     }
                 }
@@ -390,7 +399,8 @@ public:
             const std::lock_guard lock(m_mutex);
             if (!result.ok) {
                 markFailed(tab->session, PortState::Unknown);
-                error = result.error;
+                error = tab->session.sharing
+                    ? "remote shared session failed to start: " + result.error : result.error;
             } else {
                 markRunning(tab->session, result.pid, result.created);
                 started = true;
@@ -468,7 +478,7 @@ public:
             m_tabs.push_back({seed, Session{}});
             m_activeTab = m_tabs.size() - 1;
             refreshIdentityLocked();
-            m_error = L"";
+                        m_error = L"";
             notify = m_notify;
         }
         if (notify)
@@ -492,15 +502,12 @@ public:
     }
 
     // Closes a tab. A session that still owns a process refuses: the tab is
-    // the only handle to it, and dropping it would orphan the terminal. Closing
-    // also removes the tab's capture file: it belongs to this tab, and nothing
-    // else knows its name.
+    // the only handle to it, and dropping it would orphan the terminal.
     bool closeSession(std::size_t index, std::string& error)
     {
         error.clear();
         Notify notify;
         bool closed = false;
-        std::string logPath;
         {
             const std::lock_guard lock(m_mutex);
             if (index >= m_tabs.size()) {
@@ -510,7 +517,6 @@ public:
                 error = "the session must be stopped before it is closed";
                 m_error = winshun::wide(error);
             } else {
-                logPath = m_tabs[index].session.logPath;
                 m_tabs.erase(m_tabs.begin() + static_cast<std::ptrdiff_t>(index));
                 if (m_activeTab >= m_tabs.size())
                     m_activeTab = m_tabs.empty() ? 0 : m_tabs.size() - 1;
@@ -523,8 +529,6 @@ public:
         }
         if (notify)
             notify();
-        if (!logPath.empty())
-            ::DeleteFileW(winshun::wide(logPath).c_str());
         return closed;
     }
 
@@ -553,17 +557,6 @@ public:
         return diagnosticsLocked();
     }
 
-    // What the focused tab's session has written so far, at most `maxBytes`
-    // from the end. Empty means either "this tab does not capture" or "nothing
-    // has arrived yet"; the caller knows which from the form's capture flag and
-    // shows the two differently.
-    std::string captureText(std::size_t maxBytes) const
-    {
-        const std::lock_guard lock(m_mutex);
-        ensureTabLocked();
-        return readTail(m_tabs[m_activeTab].session.logPath, maxBytes);
-    }
-
 public:
 
     bool configured() const
@@ -578,6 +571,22 @@ public:
     {
         const std::lock_guard lock(m_mutex);
         return m_pluginDir;
+    }
+
+    // A new hit-log path inside dataDir for the window's optional auto-log.
+    // The folder is created here; the file itself appears on the first write.
+    std::wstring newShareLogPath() const
+    {
+        const std::lock_guard lock(m_mutex);
+        const std::wstring dir = shareLogDirLocked();
+        if (dir.empty())
+            return std::wstring();
+        SYSTEMTIME now{};
+        ::GetLocalTime(&now);
+        wchar_t name[64];
+        std::swprintf(name, 64, L"share-%04u%02u%02u-%02u%02u%02u.log",
+            now.wYear, now.wMonth, now.wDay, now.wHour, now.wMinute, now.wSecond);
+        return dir + L"\\" + name;
     }
 
     std::wstring error() const
@@ -632,23 +641,106 @@ public:
                 m_collapsed.push_back(id);
             if (!collapsed && present != m_collapsed.end())
                 m_collapsed.erase(present);
-            winshun::Json::Array folded;
-            for (const std::string& item : m_collapsed)
-                folded.emplace_back(item);
-            winshun::Json::Array touched;
-            for (const std::string& item : m_touched)
-                touched.emplace_back(item);
-            winshun::Json::Object ui;
-            ui["collapsed"] = folded;
-            ui["touched"] = touched;
-            object = m_persisted.isObject() ? m_persisted.toObject() : winshun::Json::Object{};
-            object["ui"] = ui;
-            ok = writeSettingsObjectLocked(object);
+            ok = writeUiLocked();
         }
         return ok;
     }
 
+    // The window's "log the shared content" switch. It defaults to on: an
+    // unattended serial session is exactly what a log is for, and a log that has
+    // to be remembered is a log that is missing when it matters. Persisted with
+    // the fold state, so turning it off stays off.
+    bool shareLog() const
+    {
+        const std::lock_guard lock(m_mutex);
+        return m_shareLog;
+    }
+
+    bool setShareLog(bool on)
+    {
+        const std::lock_guard lock(m_mutex);
+        if (on == m_shareLog)
+            return true;
+        m_shareLog = on;
+        return writeUiLocked();
+    }
+
+    // How the hex view draws the same bytes: bytes per row, and whether the
+    // decode column is shown. Both are the reader's taste, remembered with the
+    // fold state rather than reset on every launch.
+    int shareHexRow() const
+    {
+        const std::lock_guard lock(m_mutex);
+        return m_shareHexRow;
+    }
+
+    bool setShareHexRow(int bytes)
+    {
+        if (bytes != 8 && bytes != 16 && bytes != 32)
+            return false;
+        const std::lock_guard lock(m_mutex);
+        if (bytes == m_shareHexRow)
+            return true;
+        m_shareHexRow = bytes;
+        return writeUiLocked();
+    }
+
+    bool shareHexAscii() const
+    {
+        const std::lock_guard lock(m_mutex);
+        return m_shareHexAscii;
+    }
+
+    bool setShareHexAscii(bool on)
+    {
+        const std::lock_guard lock(m_mutex);
+        if (on == m_shareHexAscii)
+            return true;
+        m_shareHexAscii = on;
+        return writeUiLocked();
+    }
+
+    // Where the window's auto-log writes. Created on demand: the folder only
+    // exists because something is logged.
+    std::wstring shareLogDir() const
+    {
+        const std::lock_guard lock(m_mutex);
+        return shareLogDirLocked();
+    }
+
 private:
+    // One writer for the window's ui block: folds, the log switch and the hex
+    // view's shape. Every setter goes through it, so saving one never drops
+    // another.
+    bool writeUiLocked()
+    {
+        winshun::Json::Array folded;
+        for (const std::string& item : m_collapsed)
+            folded.emplace_back(item);
+        winshun::Json::Array touched;
+        for (const std::string& item : m_touched)
+            touched.emplace_back(item);
+        winshun::Json::Object ui;
+        ui["collapsed"] = folded;
+        ui["touched"] = touched;
+        ui["shareLog"] = m_shareLog;
+        ui["shareHexRow"] = static_cast<long long>(m_shareHexRow);
+        ui["shareHexAscii"] = m_shareHexAscii;
+        winshun::Json::Object object
+            = m_persisted.isObject() ? m_persisted.toObject() : winshun::Json::Object{};
+        object["ui"] = ui;
+        return writeSettingsObjectLocked(object);
+    }
+
+    std::wstring shareLogDirLocked() const
+    {
+        if (m_dataDir.empty())
+            return std::wstring();
+        const std::wstring dir = winshun::wide(m_dataDir) + L"\\sessions";
+        ::CreateDirectoryW(dir.c_str(), nullptr);
+        return dir;
+    }
+
     // wt is handed the tio path inside a command line that Windows Terminal
     // resolves against its own working directory, so a relative plugin dir would
     // start nothing. The host usually gives an absolute one; this makes it sure.
@@ -680,48 +772,6 @@ private:
     std::wstring settingsPathLocked() const
     {
         return winshun::wide(m_dataDir) + L"\\tio.json";
-    }
-
-    // Where a capturing session writes: one file per session token, in the
-    // launcher's own dataDir. tio creates it at start; the folder must exist
-    // first.
-    std::string capturePathLocked(const std::string& token) const
-    {
-        const std::wstring dir = winshun::wide(m_dataDir) + L"\\sessions";
-        ::CreateDirectoryW(dir.c_str(), nullptr);
-        return winshun::utf8(dir + L"\\" + winshun::wide(token) + L".log");
-    }
-
-    // The last `maxBytes` of a capture file. The whole file is never read: a
-    // terminal that has been running for hours can grow large, and the window
-    // only shows the tail anyway.
-    static std::string readTail(const std::string& path, std::size_t maxBytes)
-    {
-        if (path.empty())
-            return std::string();
-        HANDLE file = ::CreateFileW(winshun::wide(path).c_str(), GENERIC_READ,
-            FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL,
-            nullptr);
-        if (file == INVALID_HANDLE_VALUE)
-            return std::string();
-        LARGE_INTEGER size{};
-        std::string text;
-        if (::GetFileSizeEx(file, &size) && size.QuadPart > 0) {
-            const std::size_t total = static_cast<std::size_t>(size.QuadPart);
-            const std::size_t want = total < maxBytes ? total : maxBytes;
-            LARGE_INTEGER at{};
-            at.QuadPart = static_cast<LONGLONG>(total - want);
-            if (::SetFilePointerEx(file, at, nullptr, FILE_BEGIN)) {
-                text.resize(want);
-                DWORD read = 0;
-                if (::ReadFile(file, text.data(), static_cast<DWORD>(want), &read, nullptr))
-                    text.resize(read);
-                else
-                    text.clear();
-            }
-        }
-        ::CloseHandle(file);
-        return text;
     }
 
     void loadSettings()
@@ -756,6 +806,17 @@ private:
                     if (item.isString())
                         m_touched.push_back(item.toString());
             }
+            m_shareLog = ui.has("shareLog") ? ui["shareLog"].toBool(true) : true;
+            m_shareHexRow = ui.has("shareHexRow")
+                ? static_cast<int>(ui["shareHexRow"].toInt(16)) : 16;
+            if (m_shareHexRow != 8 && m_shareHexRow != 16 && m_shareHexRow != 32)
+                m_shareHexRow = 16;
+            m_shareHexAscii = ui.has("shareHexAscii")
+                ? ui["shareHexAscii"].toBool(false) : false;
+        } else {
+            m_shareLog = true;
+            m_shareHexRow = 16;
+            m_shareHexAscii = false;
         }
     }
 
@@ -811,10 +872,13 @@ private:
         Backend chosen = backendFromId(setting("backend").toString());
         m_form.backend = resolveBackend(m_backends, chosen);
 
-        // Capture is a per-session choice that persists with the rest of the
-        // configuration: the next launch records content. The settings page has
-        // no switch for it, so a missing value means off.
-        m_form.capture = setting("capture").toBool(false);
+        // Sharing is on by default (the standalone window is its local
+        // consumer); the user may turn it off or change the port in the
+        // standalone window. The search box still launches without it.
+        m_form.share = setting("share").toBool(true);
+        m_form.sharePort = integer(setting("sharePort"), 54321);
+        if (m_form.sharePort < 1024 || m_form.sharePort > 65535)
+            m_form.sharePort = 54321;
         m_savedForm = m_form;
     }
 
@@ -847,12 +911,15 @@ private:
         object["stopBits"] = static_cast<long long>(m_form.serial.stopBits);
         object["flow"] = std::string(flowName(m_form.serial.flow));
         object["backend"] = std::string(backendId(m_form.backend));
-        object["capture"] = m_form.capture;
+        object.erase("capture");
+        object["share"] = m_form.share;
+        object["sharePort"] = static_cast<long long>(m_form.sharePort);
         const bool written = writeSettingsObjectLocked(object);
         // The saved form is what "dirty" is measured against, whether or not
         // the file took the write: a failed write must not look saved.
-        if (written)
+        if (written) {
             m_savedForm = m_form;
+        }
         return written;
     }
 
@@ -908,6 +975,8 @@ private:
         Environment env;
         env.port = tab.form.parsed();
         env.portBusyByOther = env.port.ok() && portRunningLocked(env.port.com, &tab);
+        env.shareEnabled = tab.form.share;
+        env.sharePort = tab.form.sharePort;
         env.serial = tab.form.serial;
         env.identityKnown = m_identityValid;
         env.packageValid = m_package.ok;
@@ -923,6 +992,8 @@ private:
     {
         Environment env;
         env.port = m_form.parsed();
+        env.shareEnabled = false;
+        env.sharePort = m_form.sharePort;
         env.serial = m_form.serial;
         const SessionTab* bound = tabForPortLocked(env.port.com);
         env.identityKnown = m_identityValid;
@@ -978,8 +1049,8 @@ private:
                 const Port tabPort = tab.form.parsed();
                 text += tabPort.ok() ? "COM" + std::to_string(tabPort.com) : std::string("no port");
                 text += " " + std::string(phaseId(tab.session.phase));
-                if (tab.form.capture)
-                    text += " capture";
+                if (tab.form.share)
+                    text += " share:" + std::to_string(tab.form.sharePort);
                 if (tab.session.pid)
                     text += " pid " + std::to_string(tab.session.pid);
                 if (i == m_activeTab)
@@ -989,13 +1060,11 @@ private:
         text += "\n";
         if (!m_errorCode.empty())
             text += "last error: " + m_errorCode + "\n";
-        text += std::string("capture   : ")
-            + (m_form.capture ? "on for the next launch, written by tio to dataDir\\sessions"
-                              : "off; nothing is recorded")
-            + "\n";
-        text += "privacy   : no serial payload is read by the launcher; a session writes its own "
-                "terminal output to dataDir only when capture is on, and that file is removed "
-                "when the tab closes\n";
+        const SessionTab& focused = activeTabLocked();
+        text += std::string("remote    : ") + (focused.session.sharing
+            ? "active on all interfaces, port " + std::to_string(focused.session.sharePort)
+            : "off") + "\n";
+        text += "warning   : remote socket clients can write bytes to the serial device\n";
         return text;
     }
 
@@ -1018,6 +1087,13 @@ private:
     std::string m_errorCode;
     std::vector<std::string> m_collapsed; // folded card ids (TIO-008)
     std::vector<std::string> m_touched;   // cards the user has folded/unfolded once
+    // The window's "log the received bytes" switch: on unless turned off, and
+    // remembered across restarts. It belongs to the window, not to a session.
+    bool m_shareLog = true;
+    // The hex view's shape, remembered with the folds: bytes per row (8/16/32)
+    // and whether the decode column is shown.
+    int m_shareHexRow = 16;
+    bool m_shareHexAscii = false;
     std::wstring m_identity;
     Form m_savedForm;
     std::wstring m_identityTime;

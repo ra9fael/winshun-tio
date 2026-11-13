@@ -29,6 +29,8 @@ struct Snapshot {
     Port port;
     Serial serial;
     Backend backend = Backend::None;
+    bool share = false;
+    int sharePort = 54321;
 
     // The session tabs. Empty only before the first tab exists.
     std::vector<SessionView> sessions;

@@ -307,7 +307,8 @@ def main() -> int:
                   str(effect_types(copied)))
             report = next((e.get("text") for e in copied if e.get("type") == "copy"), "")
             check("integrity" in report, "the copied report has integrity")
-            check("no serial payload" in report, "the copied report states the privacy boundary")
+            check("remote socket clients can write" in report,
+                  "the copied report warns about remote serial writes")
 
             # Back returns to the main list.
             back = replaced(plugin.action("back", {"id": "back"}, 33))

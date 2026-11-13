@@ -269,20 +269,20 @@ static void testPlans()
     CHECK(custom.program[9] == "2", "custom stop bits reaches argv");
     CHECK(custom.program[11] == "hard", "custom flow reaches argv");
 
-    // Capture is tio writing its own log: the flags go after the parameters and
-    // before the device, so the device stays last. Without a log path tio gets
-    // exactly the arguments it always got.
-    const Plan capture = planLaunch(Backend::Conhost, "", "tio.exe", port, serial, "s-1",
-                                    "D:\\data\\sessions\\s-1.log");
-    CHECK(capture.error == PlanError::None, "a capture plan is valid");
-    CHECK(capture.program.size() == conhost.program.size() + 5, "capture adds five arguments");
-    CHECK(capture.program[12] == "-L", "logging is switched on");
-    CHECK(capture.program[13] == "--log-file", "the log file flag follows");
-    CHECK(capture.program[14] == "D:\\data\\sessions\\s-1.log", "the log path is the one given");
-    CHECK(capture.program[15] == "--log-append", "the log appends");
-    CHECK(capture.program[16] == "--log-strip", "escape sequences are stripped");
-    CHECK(capture.program.back() == "/dev/ttyS9", "the device stays last with capture on");
-    CHECK(conhost.program.back() == "/dev/ttyS9", "and last without it");
+    // Remote sharing is explicitly opt-in and places tio's socket pair before
+    // the device argument. Without confirmation, the plan has no -S option.
+    const Plan share = planLaunch(Backend::Conhost, "", "tio.exe", port, serial, "s-1",
+        true, 54321);
+    CHECK(share.error == PlanError::None, "a remote share plan is valid");
+    CHECK(share.program.size() == conhost.program.size() + 2, "sharing adds two arguments");
+    CHECK(share.program[12] == "-S", "tio socket mode is requested");
+    CHECK(share.program[13] == "inet:54321", "socket is configured on all interfaces");
+    CHECK(share.program.back() == "/dev/ttyS9", "device stays last when sharing");
+    CHECK(conhost.program.size() == 13, "sharing remains off by default");
+    CHECK(planLaunch(Backend::Conhost, "", "tio.exe", port, serial, "s-1", true, 0).error
+              == PlanError::SharePort, "port zero is rejected for an enabled share");
+    CHECK(planLaunch(Backend::Conhost, "", "tio.exe", port, serial, "s-1", true, 65536).error
+              == PlanError::SharePort, "ports above 65535 are rejected");
 }
 
 // ---- session state machine ------------------------------------------------------
@@ -581,13 +581,14 @@ static void testDiagnosticsView()
         "backend   : wt (wt 1.25.2733.0)\n"
         "port      : COM10 -> /dev/ttyS9\n"
         "session   : configuring\n"
-        "privacy   : no serial payload is read or logged; the port path is kept out of shared logs\n";
+        "remote    : off\n"
+        "warning   : remote socket clients can write bytes to the serial device\n";
 
     const std::vector<Row> view = buildDiagnosticsRows(report, lang);
-    CHECK(view.size() == 7, "one row per report line", std::to_string(view.size()));
+    CHECK(view.size() == 8, "one row per report line", std::to_string(view.size()));
     CHECK(!view.empty() && view.front().id == "diag:0", "the first row is diag:0");
     CHECK(view.front().title == "ra9fael.tio launcher", "the first row is the header");
-    CHECK(view.back().title.find("privacy") != std::string::npos, "the last row is the privacy line");
+    CHECK(view.back().title.find("warning") != std::string::npos, "the last row warns about remote writes");
 
     for (const Row& row : view)
         CHECK(row.disabled, "a diagnostics row is read-only", row.id);

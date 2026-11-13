@@ -193,7 +193,7 @@ inline Lang makeLang(bool zh)
     out.groupInformation = "Information";
     out.stop = "Stop";
     out.openWindow = "Open standalone window";
-    out.openWindowNote = "the same configuration, plus identity capture, the session block and Save";
+    out.openWindowNote = "the same configuration, plus device details, remote sharing and the session block";
     out.port = "Port";
     out.baudrate = "Baud rate";
     out.dataBits = "Data bits";
@@ -243,6 +243,20 @@ inline std::string describeError(const std::string& code, bool zh)
                   : "The plugin path holds a character wt treats as a separator (; or |)";
     if (code == "the launch arguments are invalid")
         return zh ? "启动参数无效" : "The launch arguments are invalid";
+    if (code == "the shared socket port must be between 1 and 65535")
+        return zh ? "共享 Socket 端口必须在 1 到 65535 之间"
+                  : "The shared socket port must be between 1 and 65535";
+    if (code.rfind("the shared socket port is already in use", 0) == 0)
+        return zh ? "Socket 端口已被占用；请更换端口后重试"
+                  : "The socket port is already in use; choose another port and retry";
+    if (code.rfind("could not check the shared socket port", 0) == 0
+        || code.rfind("Winsock startup failed", 0) == 0)
+        return zh ? "无法检查共享 Socket 端口：" + code
+                  : "Could not check the shared socket port: " + code;
+    if (code.rfind("remote shared session failed to start:", 0) == 0)
+        return zh ? "远程共享会话启动失败；请检查 Socket 端口和串口设备：" + code.substr(38)
+                  : "Remote shared session failed to start; check the socket port and serial device: "
+                    + code.substr(38);
     if (code == "wt started no tio process (or more than one appeared)")
         return zh ? "wt 没有启动 tio，或同时出现了多个"
                   : "wt started no tio process, or more than one appeared";

@@ -130,6 +130,7 @@ Two targets land in the repository root: `tio.exe` and `TioApp.dll`. The QML goe
 | L2 | `tests/integration.py` | 70 checks: `query` / `action` / `details` / candidate lists / the settings write / the host's settings seeding / the diagnostics view / the window's entries / language / refusals / restart | can start `tio.exe` |
 | L2+ | `tests/integration.py --launch` | 76 checks: the same plus one real session started and stopped | as above, and it holds the serial port |
 | L2' | `tio.exe --window` | 28 checks: zh/en × light/dark + the host's four styles + square corners, no QML warnings | WinShun's Qt |
+| development GUI | `pwsh tools\remote_share_gui.ps1` | visible window with a fresh temp dataDir for the sharing confirmations/port/status; `-Check` runs the hidden smoke pass | WinShun's Qt |
 | L3 | `tests/host_smoke.py` | 16 checks: the protocol through the real DLL, including `openWindow` | an installed WinShun |
 | L4 | real port | COM8 → `/dev/ttyS7` connects, unplug/replug, a busy port | hardware |
 | L5 | clean machine | the closure re-checked without MSYS2 present | a clean Windows |

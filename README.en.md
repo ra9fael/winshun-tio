@@ -2,7 +2,7 @@
 
 Opens a serial terminal with [tio](https://github.com/tio/tio) bundled inside the plugin package. **Set the parameters and launch from the search box**, or open a standalone window to configure it.
 
-Current version: **v0.1.2**.
+Current version: **v0.1.3**.
 
 ## Interactive online demo (no install)
 
@@ -15,7 +15,13 @@ If Pages is not live yet, a zero-setup preview also works:
 
 Note: this is a **UI mockup** with hard-coded sample devices (COM8/COM9). It opens no serial port and does not represent the running plugin; the installed plugin is the authority on behaviour.
 
-> **The boundary, stated plainly**: this plugin launches tio. It does **not** read, render, forward or log a single byte of serial data. What the terminal shows and what the keyboard sends belong to tio and its own window. So the most this plugin can say is "the process started" — "the port is open" appears only when tio itself gives a verifiable signal, and the default state is "unknown".
+> **Remote sharing is explicit bidirectional control, not a read-only log.** **It is on by default.** The port defaults to TCP `54321` and can be set to `1024-65535` in the plugin settings or the standalone window; tio listens on all interfaces. LAN clients can read serial data and write arbitrary bytes to the device. WT and remote clients share one session; enable only on a trusted network. The window also connects to `127.0.0.1:<port>` as a read-only consumer and shows what this shared session receives (last 128 KB). Search-box launches never enable sharing.
+
+## Window screenshot
+
+![tio standalone window: session status, bidirectional sharing, HEX content and log history](https://github.com/user-attachments/assets/f6ec794f-aa0a-4332-b44d-0002d973581c)
+
+> Captured from the running standalone window. The shared-content card switches between terminal and HEX, configures bytes per row and an ASCII decode column; auto-logging is on by default and existing logs are available from **Logs**.
 
 ## Install
 
@@ -23,7 +29,7 @@ Note: this is a **UI mockup** with hard-coded sample devices (COM8/COM9). It ope
 - **Local package**: download the `.wsplugin` from [Releases](https://github.com/ra9fael/winshun-tio/releases) and install it from the file under "Installed"
 - **Manual**: unpack into `%LOCALAPPDATA%\WinShun\plugins\ra9fael.tio\` (`plugin.json` at the folder root) and restart WinShun
 
-The first enable asks for `processes` (start the terminal) and `ui` (show the window). Requires WinShun **0.22.0** or later (the shared-Qt contract). **No MSYS2 install is needed**: tio and the DLLs it actually imports ship in the package (8 files, 6.6 MB).
+The first enable asks for `processes` (start the terminal), `ui` (show the window) and `clipboard:write` (copy shared content, the port or diagnostics); bidirectional remote sharing additionally requests listen permission for TCP `1024-65535`. WinShun asks again when a plugin update adds a permission. Requires WinShun **0.22.0** or later (the shared-Qt contract). **No MSYS2 install is needed**: tio and the DLLs it actually imports ship in the package (8 files, 6.6 MB).
 
 ## Using it
 
@@ -65,9 +71,9 @@ A change is written to disk at once: the search box has nowhere to put a Save bu
 
 Reached from its own "**Open standalone window**" row in the result list (Enter), or the launch row's menu (Ctrl+Enter).
 
-The same groups, plus what only a window can hold: tabs, a Port & parameters card (port dropdown with a refresh, baud / data bits / parity / stop bits / flow), the device identity and when it was captured, the session card (phase / port state / PID / session id, and Session content — with capture on it reads the log tio writes itself, with Copy all and Save as text), the diagnostics text, and **Save + Launch + Stop + Restart + Clone**.
+The same groups, plus tabs, a Port & parameters card, device identity, session status and diagnostics. An advanced section can explicitly confirm bidirectional remote serial sharing on TCP `54321`; it warns that all interfaces are exposed, remote clients can write to the device, and slow clients may stall tio. Launch and restart require explicit confirmation when sharing is enabled.
 
-"+" opens a session straight away and leaves the port empty until you pick one in Port & parameters; a port is exclusive only while a session runs, so picking the same one is allowed and Launch explains why it cannot go.
+"+" opens a session straight away and leaves the port empty until you pick one in Port & parameters; a port is exclusive only while a session runs, so picking the same one is allowed and Launch explains why it cannot go. Remote sharing applies only to the explicitly confirmed standalone-window session; it is not saved as the default and remains off after restart/reopen.
 
 The window draws from the host's `nativeLook` contract: all four styles (fluent / brand / tactile / liquid), the corners, the UI size and the transparency follow the host, and an appearance change repaints live.
 
@@ -115,6 +121,21 @@ cmake --build build\msvc
 ```
 
 Output: `tio.exe` (the Qt-free starter) and `TioApp.dll` (Qt and the QML window).
+
+### Open the GUI during development (before any `.wsplugin` is built)
+
+```powershell
+# visible window from the isolated build, fresh temp dataDir, no serial session
+pwsh tools\remote_share_gui.ps1
+
+# hidden startup check: stays up for a few seconds, fails on QML warnings
+pwsh tools\remote_share_gui.ps1 -Check
+
+# keep this run's temporary configuration for inspection
+pwsh tools\remote_share_gui.ps1 -KeepData
+```
+
+In the window, open Session → Advanced · bidirectional serial sharing and confirm the switch and TCP `54321`; Launch and a shared-session Restart ask for confirmation again. The wrapper only opens the window: it does not start tio, overwrite the repository-root binaries, or touch the installed WinShun's configuration.
 
 ```bat
 build\msvc\tests\tio_tests.exe          :: 280 pure-core assertions (no Qt, no Windows)
