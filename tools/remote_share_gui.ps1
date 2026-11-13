@@ -1,4 +1,4 @@
-# remote_share_gui.ps1 - open the development GUI without WinShun or packaging.
+﻿# remote_share_gui.ps1 - open the development GUI without WinShun or packaging.
 #
 # This is the pre-stable loop: build the plugin into an isolated folder, run this
 # wrapper, and test the real QML window. It never opens a serial port, never
