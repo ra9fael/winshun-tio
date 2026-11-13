@@ -94,6 +94,7 @@ jobs:
         env:
           RUNTIME_ASSET: https://github.com/ra9fael/winshun-tio/releases/download/v0.1.3/ra9fael.tio-0.1.3.wsplugin
         run: |
+          python tools/check_packaged_files.py
           python -m pip install --disable-pip-version-check --quiet zstandard
           python tools/fetch_runtime.py --from-release "$env:RUNTIME_ASSET"
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
