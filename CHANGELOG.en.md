@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.4] - 2026-11-14
+
+### Fixes (packaging)
+
+- **The development wrapper ships as BOM UTF-8**: `tools/remote_share_gui.ps1` had no BOM, and the plugin library's checker rejects such a package — Windows PowerShell 5.1 reads BOM-less UTF-8 Chinese as mojibake. The content is unchanged; only the BOM is added. The standalone window and `-Check` behave as before.
+
 ## [0.1.3] - 2026-11-14
 
 ### Shared serial viewer, terminal rendering, and clipboard permissions

@@ -2,7 +2,7 @@
 
 Opens a serial terminal with [tio](https://github.com/tio/tio) bundled inside the plugin package. **Set the parameters and launch from the search box**, or open a standalone window to configure it.
 
-Current version: **v0.1.3**.
+Current version: **v0.1.4**.
 
 ## Interactive online demo (no install)
 

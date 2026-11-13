@@ -6,7 +6,7 @@
     "zh": "tio 串口终端",
     "en": "tio serial terminal"
   },
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": {
     "zh": "用嵌入包的 tio 打开串口终端：在搜索框里就地设置端口、波特率、数据位、校验、停止位和流控，Enter 启动、再 Enter 停止；也可开独立窗口按会话配置。独立窗口可确认开启双向远程串口共享，局域网客户端可读写串口。",
     "en": "Open a serial terminal with the bundled tio: set the port, baud rate, data bits, parity, stop bits and flow control in the search box, Enter starts and Enter again stops, or configure per session in a standalone window. The standalone window can explicitly confirm bidirectional remote serial sharing; LAN clients can read and write to the serial device."
