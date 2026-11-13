@@ -95,8 +95,11 @@ jobs:
         env:
           QT_ROOT: ${{ runner.temp }}\qt
         run: |
-          python -m pip install --disable-pip-version-check --quiet aqtinstall
-          python -m aqt install-qt windows desktop 6.12.0 win64_msvc2022_64 --outputdir "$env:QT_ROOT"
+          # Released aqtinstall (3.3.0) cannot resolve Windows desktop kits from
+          # Qt 6.11 on (the repo dropped the per-version base folder; PR 1000 and
+          # 1048 fix it), so pin the fix from master rather than the release.
+          python -m pip install --disable-pip-version-check --quiet "aqtinstall @ git+https://github.com/miurahr/aqtinstall.git"
+          python -m aqt install-qt windows desktop 6.12.0 win64_msvc2022_64 --outputdir "$env:QT_ROOT" --archives qtbase qtdeclarative qttools qttranslations qtsvg qtdoc
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           "QT_ROOT_DIR=$env:QT_ROOT\6.12.0\msvc2022_64" | Out-File -Append $env:GITHUB_ENV
           "$env:QT_ROOT\6.12.0\msvc2022_64\bin" | Out-File -Append $env:GITHUB_PATH
