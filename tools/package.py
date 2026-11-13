@@ -93,6 +93,7 @@ BASE_FILES = [
     "tests/test_window.cpp",
     "tools/package.py",
     "tools/copy_qt_dlls.cmake",
+    "tools/fetch_runtime.py",
     "tools/remote_share_gui.ps1",
     "tools/probe_share.py",
     "tools/probe_share_client.cpp",
