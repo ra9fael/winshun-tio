@@ -177,6 +177,25 @@ static void testBackends()
     CHECK(!changed, "no change to persist");
     CHECK(resolveBackend(found, Backend::Wt, &changed) == Backend::Wt, "saved wt kept");
 
+    // The preference is what the user chose; resolvePreference answers what can
+    // run today. auto follows the order, a pin stands while its backend exists.
+    CHECK(resolvePreference(found, BackendPreference::Auto) == Backend::Wt, "auto prefers wt");
+    CHECK(resolvePreference(found, BackendPreference::Wt) == Backend::Wt,
+        "a pinned wt resolves to wt");
+    CHECK(resolvePreference(found, BackendPreference::Conhost) == Backend::Conhost,
+        "a pinned conhost resolves to conhost");
+
+    CHECK(std::string(backendPreferenceId(BackendPreference::Auto)) == "auto", "preference id auto");
+    CHECK(std::string(backendPreferenceId(BackendPreference::Wt)) == "wt", "preference id wt");
+    CHECK(std::string(backendPreferenceId(BackendPreference::Conhost)) == "conhost",
+        "preference id conhost");
+    CHECK(backendPreferenceFromId("wt") == BackendPreference::Wt, "preference from id wt");
+    CHECK(backendPreferenceFromId("conhost") == BackendPreference::Conhost,
+        "preference from id conhost");
+    CHECK(backendPreferenceFromId("auto") == BackendPreference::Auto, "preference from id auto");
+    CHECK(backendPreferenceFromId("nope") == BackendPreference::Auto,
+        "an unknown id is the default preference");
+
     // wt disappeared: the saved choice no longer holds, and that must be saved.
     found.wt = false;
     changed = false;
@@ -188,6 +207,17 @@ static void testBackends()
     CHECK(resolveBackend(found, Backend::Wt, &changed) == Backend::None, "both gone -> none");
     CHECK(changed, "losing both is also a change");
     CHECK(!available(found, Backend::Wt), "wt gone");
+
+    // A pin on an absent backend falls back in the same order, and the
+    // preference itself never moves: the answer follows the machine.
+    Backends onlyConhost;
+    onlyConhost.conhost = true;
+    CHECK(resolvePreference(onlyConhost, BackendPreference::Wt) == Backend::Conhost,
+        "a missing pin falls back to conhost");
+    CHECK(resolvePreference(onlyConhost, BackendPreference::Auto) == Backend::Conhost,
+        "auto falls back in the same order");
+    CHECK(resolvePreference(Backends{}, BackendPreference::Wt) == Backend::None,
+        "nothing installed resolves to none");
 
     CHECK(std::string(backendId(Backend::Wt)) == "wt", "backend id wt");
     CHECK(std::string(backendId(Backend::Conhost)) == "conhost", "backend id conhost");
@@ -452,14 +482,6 @@ static void testRows()
     CHECK(std::string(lang.separator) == " · ", "the separator is a middle dot");
     CHECK(std::string(lang.arrow) == " → ", "the arrow marks the mapping");
 
-    // A group caption's id is fixed so the keyboard stays on the same row when
-    // the host re-answers in another language.
-    const Row group = groupRow("launch", lang.groupLaunch);
-    CHECK_D(group.id == "group:launch", "a group row id is language-independent", group.id);
-    const Row groupEn = groupRow("launch", "Launch");
-    CHECK(groupEn.id == group.id, "the same group id in either language");
-    CHECK(group.disabled, "a group caption is not selectable");
-
     // serialText: the same spelling everywhere.
     Serial s;
     CHECK(serialText(s) == "115200 8n1 · none", "the default serial text");
@@ -493,16 +515,6 @@ static void testRows()
     CHECK(back.action == "back" && back.actionKey == "Enter", "back is on Enter");
     CHECK(back.score > 99, "back sorts first");
 
-    Row current = portRow(10, "USB\\VID_10C4&PID_EA60\\0001", true, lang);
-    CHECK(current.id == "port:10", "a port row id names the port");
-    CHECK(current.title == "COM10", "a port row titles the COMn");
-    CHECK_D(current.subtitle.find("/dev/ttyS9") != std::string::npos,
-        "a port row shows the n-1 mapping", current.subtitle);
-    CHECK_D(current.subtitle.find("VID_10C4") != std::string::npos,
-        "a port row shows the device identity", current.subtitle);
-    CHECK(current.checked, "the current port is ticked");
-    CHECK(!portRow(9, "", false, lang).checked, "another port is not ticked");
-
     // The baud list is closed, and only 115200 is called the default.
     int count = 0;
     const int* rates = baudrates(count);
@@ -516,124 +528,104 @@ static void testRows()
     CHECK(baudRow(115200, true, lang).subtitle == "tio 默认", "115200 is the tio default");
     CHECK(baudRow(9600, false, lang).subtitle.empty(), "another rate carries no note");
 
-    // A backend the machine lacks is disabled but still listed: a choice that
-    // cannot start is worse than no choice.
-    const Row missing = backendRow(Backend::Wt, false, std::string(), true, lang);
-    CHECK(missing.disabled, "an absent backend is disabled");
-    CHECK(!missing.checked || missing.disabled, "disabled wins over the tick");
-    CHECK_D(missing.subtitle.find("未安装") != std::string::npos, "it says it is not installed",
-        missing.subtitle);
-    const Row installed = backendRow(Backend::Wt, true, "1.25.2733.0", false, lang);
-    CHECK(!installed.disabled, "a present backend is selectable");
-    CHECK_D(installed.subtitle.find("1.25.2733.0") != std::string::npos,
-        "it names the version", installed.subtitle);
-    CHECK(backendRow(Backend::Conhost, true, std::string(), false, lang).score
-            < backendRow(Backend::Wt, true, std::string(), false, lang).score,
-        "wt sorts before conhost");
+    // The backend choice is spelled out on the launch row: which preference is
+    // in force, and which terminal it resolves to on this machine.
+    CHECK(backendChoiceLabel(BackendPreference::Auto, Backend::Wt, lang)
+              == "自动（Windows Terminal）",
+        "auto names the terminal it resolved to");
+    CHECK(backendChoiceLabel(BackendPreference::Auto, Backend::Conhost, lang)
+              == "自动（conhost 控制台）",
+        "auto says when conhost is in force");
+    CHECK(backendChoiceLabel(BackendPreference::Conhost, Backend::Conhost, lang)
+              == "conhost 控制台", "a pin shows its own label");
+    CHECK(backendChoiceLabel(BackendPreference::Auto, Backend::None, lang) == "自动（不可用）",
+        "no backend is said, not guessed");
+    en.automatic = "Automatic";
+    CHECK(backendChoiceLabel(BackendPreference::Auto, Backend::Wt, en)
+              == "Automatic (Windows Terminal)", "the english label");
 
-    // The cycle order is the one the UI promises, and it wraps.
-    Serial cycle;    cycleDataBits(cycle);
-    CHECK(cycle.dataBits == 5, "8 cycles to 5");
-    for (int i = 0; i < 3; ++i)
-        cycleDataBits(cycle);
-    CHECK(cycle.dataBits == 8, "three more come back to 8");
-    cycle.dataBits = 9; // not a supported value
-    cycleDataBits(cycle);
-    CHECK(cycle.dataBits == 8, "an unsupported value resets to 8");
+    // The rate list grows by the current value when it is a custom one: what is
+    // on screen is always one of the rows.
+    CHECK(baudrateChoices(115200).size() == 9, "a usual rate needs no extra row");
+    const std::vector<int> choices = baudrateChoices(12345);
+    CHECK_D(choices.size() == 10 && choices.back() == 12345,
+        "a custom rate is appended", std::to_string(choices.size()));
 
-    cycle.parity = Parity::None;
-    cycleParity(cycle);
-    CHECK(cycle.parity == Parity::Even, "none cycles to even");
-    for (int i = 0; i < 4; ++i)
-        cycleParity(cycle);
-    CHECK(cycle.parity == Parity::None, "five cycles come back to none");
+    // The edits are what a save submits: an untouched field carries nothing, the
+    // keys come out in the fixed order, and applying them touches only those.
+    FormEdits edits;
+    CHECK(!edits.any(), "no edits, nothing to save");
+    CHECK(edits.keys().empty(), "no edits, no keys");
+    edits.baudrate = 9600;
+    edits.share = false;
+    CHECK(edits.any(), "two edits are pending");
+    const std::vector<ConfigKey> keys = edits.keys();
+    CHECK(keys.size() == 2 && keys[0] == ConfigKey::Baudrate && keys[1] == ConfigKey::Share,
+        "the keys come in the fixed order");
+    Form form;
+    form.serial.baudrate = 115200;
+    edits.applyTo(form);
+    CHECK(form.serial.baudrate == 9600, "an edit lands on its field");
+    CHECK(!form.share, "the other edit lands too");
+    CHECK(form.serial.dataBits == 8 && form.serial.parity == Parity::None,
+        "an untouched field is left alone");
+    edits.clear();
+    CHECK(!edits.any(), "clear empties the set");
 
-    cycle.stopBits = 1;
-    cycleStopBits(cycle);
-    CHECK(cycle.stopBits == 2, "1 stop bit cycles to 2");
-    cycleStopBits(cycle);
-    CHECK(cycle.stopBits == 1, "and back to 1");
+    // The ownership split: three keys are the host's settings page, the rest
+    // live in tio.json alone.
+    CHECK(hostOwned(ConfigKey::Port) && hostOwned(ConfigKey::Baudrate)
+              && hostOwned(ConfigKey::Backend),
+        "port, baudrate and backend are the host's");
+    CHECK(!hostOwned(ConfigKey::DataBits) && !hostOwned(ConfigKey::Share)
+              && !hostOwned(ConfigKey::SharePort),
+        "the advanced keys are the plugin's");
+    CHECK(allConfigKeys().size() == 9, "every key is listed");
+    CHECK(advancedConfigKeys().size() == 6, "the advanced keys are the non-host ones");
 
-    cycle.flow = Flow::None;
-    cycleFlow(cycle);
-    CHECK(cycle.flow == Flow::Hard, "none cycles to hard");
-    cycleFlow(cycle);
-    CHECK(cycle.flow == Flow::Soft, "hard cycles to soft");
-    cycleFlow(cycle);
-    CHECK(cycle.flow == Flow::None, "soft cycles to none");
-    cycle.flow = Flow::Hard;
-    cycleFlow(cycle);
-    CHECK(validate(cycle) == ParamError::None, "a cycled form always validates");
+    // sameForm compares the whole configuration: the preference, the values,
+    // and the resolved terminal with them.
+    Form same;
+    same.port = L"COM10";
+    Form identical = same;
+    CHECK(sameForm(same, identical), "identical forms are the same");
+    identical.serial.baudrate = 9600;
+    CHECK(!sameForm(same, identical), "a different rate is a different form");
+    identical = same;
+    identical.preference = BackendPreference::Wt;
+    CHECK(!sameForm(same, identical), "a different preference is a different form");
+    identical = same;
+    identical.sharePort = 54322;
+    CHECK(!sameForm(same, identical), "a different share port is a different form");
 }
 
-// The diagnostics view: one read-only row per line, the whole report on the
-// first row's copy, no row claims a connection.
-static void testDiagnosticsView()
-{
-    Lang lang;
-
-    // The report is what the controller would show; the row builder only splits
-    // it, so a hand-written block stands in for the controller here.
-    const std::string report =
-        "ra9fael.tio launcher\n"
-        "package   : 3.9-3\n"
-        "integrity : valid\n"
-        "backend   : wt (wt 1.25.2733.0)\n"
-        "port      : COM10 -> /dev/ttyS9\n"
-        "session   : configuring\n"
-        "remote    : off\n"
-        "warning   : remote socket clients can write bytes to the serial device\n";
-
-    const std::vector<Row> view = buildDiagnosticsRows(report, lang);
-    CHECK(view.size() == 8, "one row per report line", std::to_string(view.size()));
-    CHECK(!view.empty() && view.front().id == "diag:0", "the first row is diag:0");
-    CHECK(view.front().title == "ra9fael.tio launcher", "the first row is the header");
-    CHECK(view.back().title.find("warning") != std::string::npos, "the last row warns about remote writes");
-
-    for (const Row& row : view)
-        CHECK(row.disabled, "a diagnostics row is read-only", row.id);
-
-    // The whole report travels on the first row only.
-    CHECK(view.front().copy == report, "the first row copies the report");
-    CHECK(view.front().action == "copyDiagnostics", "the first row offers copy on Shift+Enter");
-    for (std::size_t i = 1; i < view.size(); ++i) {
-        CHECK(view[i].copy.empty(), "no other row carries a copy", view[i].id);
-        CHECK(view[i].action.empty(), "no other row has an action", view[i].id);
-    }
-
-    // A row never claims the port is open.
-    for (const Row& row : view) {
-        CHECK(row.title.find("connected") == std::string::npos,
-            "a diagnostics row does not claim a connection", row.id);
-    }
-
-    // An empty report produces no rows: nothing to read, nothing to offer.
-    CHECK(buildDiagnosticsRows(std::string(), lang).empty(), "an empty report has no rows");
-}
-
-// The standalone window's entries: its own row, and Ctrl+Enter on the launch
-// row. The user has to be able to see a way in, not just know a chord.
+// The standalone window's entry: it doubles as the configuration summary, and
+// the launch row's menu carries the same window. The main list holds nothing
+// else — launch rows, the baud shortcuts and this row are all of it.
 static void testWindowEntry()
 {
     Lang lang;
     CHECK(std::string(lang.openWindow) == "打开独立窗口", "the entry row's title");
 
-    // The row: its own, with the entry action on Enter.
+    // The row: the summary on it, the window on Enter.
     Snapshot s;
     s.port = parsePort("COM10");
     s.readiness.blocking.push_back(Gate::Port); // blocked: the entry must still be there
     const std::vector<Row> rows = buildRows(s, Browse::None, lang);
     const Row* entry = nullptr;
     for (const Row& row : rows) {
-        if (row.id == "openWindow")
+        if (row.id == "config")
             entry = &row;
     }
-    CHECK(entry != nullptr, "the window entry row is in the list");
+    CHECK(entry != nullptr, "the config row is in the list");
     if (entry) {
-        CHECK(entry->action == "openWindow", "the entry row opens the window", entry->action);
-        CHECK(entry->actionKey == "Enter", "the entry row is on Enter");
-        CHECK(!entry->disabled, "the entry row is selectable even when launch is blocked");
-        CHECK(entry->score > 50, "the entry row sorts high");
+        CHECK(entry->action == "openWindow", "the config row opens the window", entry->action);
+        CHECK(entry->actionKey == "Enter", "the config row is on Enter");
+        CHECK(!entry->disabled, "the config row is selectable even when launch is blocked");
+        CHECK_D(entry->subtitle.find("115200 8n1") != std::string::npos,
+            "the config row shows the serial parameters", entry->subtitle);
+        CHECK_D(entry->subtitle.find("自动") != std::string::npos,
+            "the config row shows the backend choice", entry->subtitle);
     }
 
     // The launch row: one per port, launch on Enter, the window on Ctrl+Enter,
@@ -655,6 +647,19 @@ static void testWindowEntry()
             CHECK(launch->moreActions[0].second == "Ctrl+Enter",
                 "the extra action is on Ctrl+Enter", launch->moreActions[0].second);
         }
+    }
+
+    // The whole main list, by id: nothing else may creep back in — no captions,
+    // no informational rows.
+    std::vector<std::string> ids;
+    for (const Row& row : rows)
+        ids.push_back(row.id);
+    const std::vector<std::string> wanted = {"port:10", "baud", "config"};
+    CHECK(ids == wanted, "the main list is exactly the lean set");
+    for (const std::string& id : ids) {
+        CHECK(id.rfind("group:", 0) != 0 && id != "control" && id != "diagnostics"
+                  && id != "openWindow",
+            "no captions or informational rows in the main list", id);
     }
 }
 
@@ -890,7 +895,6 @@ int main()
     testSessionFailure();
     testReadiness();
     testRows();
-    testDiagnosticsView();
     testWindowEntry();
     testSessionRows();
     testPortRows();

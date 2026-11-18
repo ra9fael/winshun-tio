@@ -4,17 +4,27 @@
 
 本轮在什么机器上、跑了什么、结果如何、什么还没跑。**只有这一节里写了「实测」的，才算验证过。**
 
-环境：Windows 11 x64 ｜ MSVC 19.51（VS 18 Community）｜ CMake 3.29.2 ｜ Ninja 1.12 ｜ Qt 6.12.0（`D:\tools\Qt\6.12.0\msvc2022_64`）｜ Win顺 0.22.0（`C:\Program Files\WinShun`）｜ 本机串口 `Silicon Labs CP210x (COM8)`
+环境：Windows 11 x64 ｜ MSVC 19.51（VS 18 Community）｜ CMake 3.29.2 ｜ Ninja 1.12 ｜ Qt 6.12.0（`D:\tools\Qt\6.12.0\msvc2022_64`）｜ Win顺 0.30.0（`C:\Program Files\WinShun`）｜ 本机串口 `Silicon Labs CP210x (COM8)`
 
 ## 1. 跑过的检查
 
+0.2.0 轮（配置所有权改造）实测如下；0.1.4 轮的硬件与打包记录在第 2 节保留。
+
 | 层 | 命令 | 结果 | 说明 |
 |---|---|---|---|
-| L0 | `build\msvc\tests\tio_tests.exe` | **280 / 280 通过** | 纯 C++；含诊断视图行拆分、窗口入口行、外观契约解析（风格/尺寸白名单、直角、无 nativeLook 回退） |
-| L0' | `build\msvc\tests\tio_window_tests.exe` | **46 / 46 通过** | 窗口模型：取值表、就地编辑、拒绝非法值、脏表单不被外部改动覆盖、后端可选、诊断、折叠持久化 |
+| L0 | `build\msvc\tests\tio_tests.exe` | **292 / 292 通过** | 纯 C++；主列表形状断言（启动行 + 波特率 + 开窗行，无端口/控制线/诊断行）、后端偏好解析、`FormEdits` 键集、`sameForm`、外观契约 |
+| L0' | `build\msvc\tests\tio_window_tests.exe` | **125 / 125 通过** | 窗口模型：自定义波特率接受/拒绝、auto 偏好保存后保持、按键提交的保存、脏表单保护、后端可选、诊断 |
+| ctest 全套 | `ctest --test-dir build\msvc -C Release` | **5 / 5 通过** | tio_logic、tio_window_model、tio_share_client、tio_ansi_text、tio_share_port_preflight |
+| L2 | `python tests\integration.py` | **52 / 52 通过** | 协议往返，含 `winshun/settings/update` 移交、宿主值覆盖本地旧值、迁移只补宿主缺的键、主列表形状、窗口入口行 |
+| 打包 | `python tools\package.py --dev` | 通过 | 校验和见 `dist\development\` 下同名 `.sha256`；运行时校验内置在打包流程 |
+| 安装 | `ws plugin install` | 通过 | 0.1.4 → 0.2.0，已启用 |
+
+0.1.4 轮的记录（本轮未重跑硬件与打包后项）：
+
+| 层 | 命令 | 结果 | 说明 |
+|---|---|---|---|
 | L1 | `build\msvc\tests\tio_native_probe.exe` | **30 / 30 通过** | 会真起进程；两条后端路径都实测 |
-| L2 | `python tests\integration.py` | **70 / 70 通过** | 协议往返，含 `replace`、落盘、宿主设置种子、诊断视图展开/复制与窗口入口行 |
-| L2+ | `python tests\integration.py --launch` | **76 / 76 通过** | 额外起一个真会话：启动行、运行中提示、落盘、Enter 停止；停后 COM8 立刻可再打开，无孤儿进程 |
+| L2+ | `python tests\integration.py --launch` | **76 / 76 通过** | 额外起一个真会话：启动行、运行中提示、Enter 停止；停后 COM8 立刻可再打开，无孤儿进程 |
 | L2' | `python tests\window_check.py` | **28 / 28 通过** | 中英 × 深浅 4 组 + 宿主四种风格（fluent/brand/tactile/liquid 各带全套 nativeLook）+ 直角，无 QML 警告 |
 | L3 | `python tests\host_smoke.py` | **16 / 16 通过** | 按宿主的启动方式（`WS_QT_DIR` + JSON-RPC）跑真实 DLL 路径 |
 
@@ -34,12 +44,15 @@
 | 分组行 id 随语言变化 | 分组标题是本地化的，id 却是从标题派生的，切语言后宿主找不到原来那一行 → id 改成固定值（`group:launch` / `parameters` / `information`），L0 与 L2 各有一条断言 |
 | 启动用的配置不落盘 | `launch()` 只 adopted 不写文件，于是「跑的是 A、下一次 query 显示 B」→ 现在启动前先写盘，L2+ 核对了 `tio.json` 的 `port` / `packageVersion` |
 | 运行中的行没有任何提示 | 启动后该行与空闲时长得一样 → 运行/启动中/停止中会写进副标题 |
-| 宿主设置被忽略 | `settingsChanged` 以前直接丢弃载荷 → 现在作为**种子**：只有 `tio.json` 没记过的键才采纳，用户自己的编辑优先（L2 覆盖，含「数字字段以字符串传入」） |
+| 宿主设置被忽略 | `settingsChanged` 以前直接丢弃载荷（0.1.x：作为种子，只有 `tio.json` 没记过的键才采纳）→ **0.2.0 起页面持有 port/baudrate/backend**：它的记录就是最新答案，推来的值立即采纳且不回发；文件旧值一次性移交后以页面为准（L2 覆盖，含「数字字段以字符串传入」与「页面改值覆盖在用值」） |
+| 保存把 auto 固化成 wt | 表单只存解析后的后端，一次保存其他字段就把 `auto` 写成了 `wt` → 偏好（`BackendPreference`）与解析结果分开存储与发布，auto 保存/重启后仍是 auto（L0' 覆盖） |
+| 页面三项写进 tio.json | 公共键原本同时落 `tio.json` 与设置页，两处可分叉 → `writeSettingsLocked` 现在把这三键从文件里移除，文件只剩高级键与 UI 状态（L2 断言文件里没有这三个键） |
 | 主题/语言切换不重绘窗口 | `DesignTokens.dark` 只读签名属性，且 `appearanceChanged` 不通知视图 → 改成读模型的 `dark` 并 `Controller::touch()` 通知，不重新探测端口 |
 | 窗口渲染 | `--window` 在 software 渲染下截图确认：五个分组、控件、双语、深浅都正确（截图见会话记录，不入库） |
 | 图标 | 字形方案按 [winshun-plugin-icons](../../winshun-plugin-icons) 流水线生成：Phosphor `wave-square`（U+EA9E）逐尺寸栅格化；`app.ico` 8 档 + `icons/app-*.png` 与 ICO 同像素；窗口标题栏/任务栏用 `setPluginWindowIcon()` 读 `:/plugin-icons` 资源（L2' 的无 QML 警告运行包含该路径）；字体加载从 `prepareGui` 挪到 `startGui`（`QGuiApplication` 之后），修掉了字体代码上线前的必然崩溃 |
 | 无 Qt 回退 | 清空 `WS_QT_DIR`/`WS_APP_DIR` 后 `tio.exe` 仍然服务协议，`openWindow` 回答「独立窗口需要 Qt 版插件」，不崩 |
 | 各契约版本 | `plugin.json` 声明 `"qt": "host"`, `"qtVersion": "6.12.0"`；宿主 `Qt6Core.dll` 实测 6.12.0.0 |
+| `winshun/settings/update` | 搜索框改波特率后插件发出 `winshun/settings/update`（`baudrate` 为数字），宿主记录后回推 `settingsChanged`；插件对相同值不再重发（无回环） |
 
 ## 3. 还没跑（交付门槛）
 

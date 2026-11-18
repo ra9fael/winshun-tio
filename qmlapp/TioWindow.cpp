@@ -55,17 +55,6 @@ QStringList rates()
     return out;
 }
 
-int indexOfRate(int rate)
-{
-    int count = 0;
-    const int* values = baudrates(count);
-    for (int i = 0; i < count; ++i) {
-        if (values[i] == rate)
-            return i;
-    }
-    return -1;
-}
-
 } // namespace
 
 TioWindow::TioWindow(QObject* parent) : QObject(parent)
@@ -119,31 +108,39 @@ Form TioWindow::focusedForm() const
 
 void TioWindow::recomputeDirty()
 {
-    // Dirty means "differs from what the settings file records", not "differs
-    // from the controller's in-memory form": picking a port previews it in
-    // memory without saving, and that must not clear the marker.
-    const Form saved = core().controller().savedForm();
-    const bool dirty = winshun::utf8(m_form.port) != winshun::utf8(saved.port)
-        || m_form.serial.baudrate != saved.serial.baudrate
-        || m_form.serial.dataBits != saved.serial.dataBits
-        || m_form.serial.parity != saved.serial.parity
-        || m_form.serial.stopBits != saved.serial.stopBits
-        || m_form.serial.flow != saved.serial.flow || m_form.backend != saved.backend
-        || m_form.share != saved.share || m_form.sharePort != saved.sharePort;
+    // Dirty means "there is something to save": the user's own edits, kept apart
+    // from the form. A preview (a port picked here) is not a save, and an outside
+    // change to a key the user did not touch is not an edit either.
+    const bool dirty = m_edits.any();
     if (dirty != m_dirty) {
         m_dirty = dirty;
         emit changed();
     }
 }
 
-void TioWindow::edit(const std::function<void(Form&)>& change)
+void TioWindow::recordEdit(ConfigKey key)
+{
+    switch (key) {
+    case ConfigKey::Port: m_edits.port = m_form.port; break;
+    case ConfigKey::Baudrate: m_edits.baudrate = m_form.serial.baudrate; break;
+    case ConfigKey::Backend: m_edits.preference = m_form.preference; break;
+    case ConfigKey::DataBits: m_edits.dataBits = m_form.serial.dataBits; break;
+    case ConfigKey::Parity: m_edits.parity = m_form.serial.parity; break;
+    case ConfigKey::StopBits: m_edits.stopBits = m_form.serial.stopBits; break;
+    case ConfigKey::Flow: m_edits.flow = m_form.serial.flow; break;
+    case ConfigKey::Share: m_edits.share = m_form.share; break;
+    case ConfigKey::SharePort: m_edits.sharePort = m_form.sharePort; break;
+    }
+}
+
+void TioWindow::edit(ConfigKey key, const std::function<void(Form&)>& change)
 {
     change(m_form);
-    if (m_form.backend == Backend::None) {
-        // A backend this machine lacks is not a state the form may hold; keep
-        // what was there rather than promising a terminal that will not start.
-        m_form.backend = focusedForm().backend;
-    }
+    // The resolved backend follows the preference: a pin names the terminal the
+    // machine runs today, and a pin the machine lacks falls back in the same
+    // order — the form never promises a terminal that will not start.
+    m_form.backend = resolvePreference(core().controller().snapshot().backends, m_form.preference);
+    recordEdit(key);
     // The edit lands on the focused tab, in memory only: a save stays an
     // explicit Save. The controller refuses a port another tab holds.
     std::string error;
@@ -200,6 +197,21 @@ QString TioWindow::stopBits() const { return number(m_form.serial.stopBits); }
 QString TioWindow::flow() const { return fromStd(flowName(m_form.serial.flow)); }
 
 QStringList TioWindow::baudrateOptions() const { return rates(); }
+
+// Whether the rate on screen is one the dropdown does not list: the field then
+// shows it as a custom value instead of pretending one of the shortcuts is on.
+bool TioWindow::baudrateCustom() const
+{
+    const int rate = m_form.serial.baudrate;
+    int count = 0;
+    const int* values = baudrates(count);
+    for (int i = 0; i < count; ++i) {
+        if (values[i] == rate)
+            return false;
+    }
+    return true;
+}
+
 QStringList TioWindow::dataBitsOptions() const { return {"5", "6", "7", "8"}; }
 QStringList TioWindow::parityOptions() const { return {"none", "even", "odd", "mark", "space"}; }
 QStringList TioWindow::stopBitsOptions() const { return {"1", "2"}; }
@@ -209,6 +221,26 @@ QVariantList TioWindow::backends() const
 {
     QVariantList out;
     const Snapshot snapshot = core().controller().snapshot();
+    const Lang lang = makeLang(zh());
+
+    // "auto" first: it is the default, and the row says which terminal it picks
+    // on this machine, so the choice is never a guess.
+    {
+        QVariantMap row;
+        row["id"] = QString("auto");
+        row["title"] = zh() ? QString("自动") : QString("Automatic");
+        row["version"] = QString();
+        row["available"] = true;
+        row["current"] = m_form.preference == BackendPreference::Auto;
+        row["owned"] = false;
+        row["detail"] = zh()
+            ? QString("优先 Windows Terminal，没有则 conhost；当前解析为 %1")
+                  .arg(fromStd(backendLabel(snapshot.backend, lang)))
+            : QString("prefers Windows Terminal, falls back to conhost; resolves to %1 now")
+                  .arg(fromStd(backendLabel(snapshot.backend, lang)));
+        out << row;
+    }
+
     for (const Backend which : {Backend::Wt, Backend::Conhost}) {
         const bool wt = which == Backend::Wt;
         const bool available = wt ? snapshot.backends.wt : snapshot.backends.conhost;
@@ -217,9 +249,15 @@ QVariantList TioWindow::backends() const
         row["title"] = wt ? QString("Windows Terminal") : QString("conhost");
         row["version"] = wt ? fromStd(snapshot.backends.wtVersion) : QString();
         row["available"] = available;
-        row["current"] = m_form.backend == which;
+        row["current"] = m_form.preference == (wt ? BackendPreference::Wt : BackendPreference::Conhost);
         // Which one owns the process, spelled out: it decides how "Stop" works.
         row["owned"] = !wt;
+        row["detail"] = !available
+            ? (zh() ? QString("这台机器没有：不能选") : QString("not on this machine: not selectable"))
+            : wt ? (zh() ? QString("tio 由 Windows Terminal 创建：停止靠标题与创建时间定位，归属受限")
+                         : QString("Windows Terminal creates tio: Stop finds it by title and creation time, ownership is limited"))
+                 : (zh() ? QString("tio 是我们创建的子进程：停止可靠")
+                         : QString("tio is the child process we create: Stop is reliable"));
         out << row;
     }
     return out;
@@ -227,7 +265,7 @@ QVariantList TioWindow::backends() const
 
 QString TioWindow::backendText() const
 {
-    return fromStd(backendLabel(m_form.backend, makeLang(zh())));
+    return fromStd(backendChoiceLabel(m_form.preference, m_form.backend, makeLang(zh())));
 }
 
 QString TioWindow::identity() const
@@ -498,8 +536,10 @@ void TioWindow::focusSession(int index)
     core().controller().focusSession(static_cast<std::size_t>(index));
     // The form mirrors the focused tab unconditionally: the edits already
     // live in the tab (preview adopts them at once), so nothing is lost by
-    // switching, and the cards below must draw the tab the user clicked.
+    // switching, and the cards below must draw the tab the user clicked. The
+    // edit list belongs to the tab that was focused, so it starts empty here.
     m_form = focusedForm();
+    m_edits.clear();
     recomputeDirty();
     emit changed();
 }
@@ -516,8 +556,11 @@ bool TioWindow::newSession()
         emit notice(fromStd(describeError(error, zh())));
         return false;
     }
-    reload();
+    // A new focus: the edits belonged to the tab that was on screen. They go
+    // before the reload, so the form follows the tab that just took focus.
+    m_edits.clear();
     recomputeDirty();
+    reload();
     emit changed();
     return true;
 }
@@ -529,8 +572,11 @@ bool TioWindow::cloneSession(int index)
         emit notice(fromStd(describeError(error, zh())));
         return false;
     }
-    reload();
+    // A new focus: the edits belonged to the tab that was on screen. They go
+    // before the reload, so the form follows the tab that just took focus.
+    m_edits.clear();
     recomputeDirty();
+    reload();
     emit changed();
     return true;
 }
@@ -560,8 +606,11 @@ bool TioWindow::closeSession(int index)
         emit notice(fromStd(describeError(error, zh())));
         return false;
     }
-    reload();
+    // A new focus: the edits belonged to the tab that was on screen. They go
+    // before the reload, so the form follows the tab that just took focus.
+    m_edits.clear();
     recomputeDirty();
+    reload();
     emit changed();
     return true;
 }
@@ -700,7 +749,9 @@ void TioWindow::openShareLog(const QString& path)
 
 void TioWindow::openShareLogDir()
 {
-    const QString dir = shareLogDir();
+    // The user asked for the folder, so it may come into existence here: a
+    // getter must not create it, but this click may.
+    const QString dir = QString::fromStdWString(core().controller().ensureShareLogDir());
     if (dir.isEmpty()) {
         emit notice(zh() ? "还没有日志目录" : "there is no log folder yet");
         return;
@@ -1003,7 +1054,7 @@ void TioWindow::setShareEnabled(bool enabled)
         emit changed();
         return;
     }
-    edit([enabled](Form& form) { form.share = enabled; });
+    edit(ConfigKey::Share, [enabled](Form& form) { form.share = enabled; });
     emit changed();
 }
 
@@ -1047,7 +1098,7 @@ bool TioWindow::setSharePort(int port)
     }
     if (port == m_form.sharePort)
         return true;
-    edit([port](Form& form) { form.sharePort = port; });
+    edit(ConfigKey::SharePort, [port](Form& form) { form.sharePort = port; });
     // The consumer must follow the configured endpoint. If a session is not
     // running nothing connects yet; the next launch will use this port.
     syncShareClient();
@@ -1095,19 +1146,20 @@ void TioWindow::selectPort(int com)
 {
     if (com <= 0)
         return;
-    edit([com](Form& form) { form.port = L"COM" + std::to_wstring(com); });
     // edit() previews into the focused tab, which recaptures the identity for
     // the port just picked (TIO-010); the notice names a refused port.
+    edit(ConfigKey::Port, [com](Form& form) { form.port = L"COM" + std::to_wstring(com); });
 }
 
 void TioWindow::setBaudrate(const QString& rate)
 {
-    const int value = rate.toInt();
-    if (indexOfRate(value) < 0) {
-        emit notice(zh() ? "tio 3.9 不支持这个波特率" : "tio 3.9 does not take that baud rate");
+    bool ok = false;
+    const int value = rate.trimmed().toInt(&ok);
+    if (!ok || value <= 0) {
+        emit notice(zh() ? "波特率要是正整数" : "the baud rate must be a positive integer");
         return;
     }
-    edit([value](Form& form) { form.serial.baudrate = value; });
+    edit(ConfigKey::Baudrate, [value](Form& form) { form.serial.baudrate = value; });
 }
 
 void TioWindow::setDataBits(const QString& bits)
@@ -1115,7 +1167,7 @@ void TioWindow::setDataBits(const QString& bits)
     const int value = bits.toInt();
     if (value < 5 || value > 8)
         return;
-    edit([value](Form& form) { form.serial.dataBits = value; });
+    edit(ConfigKey::DataBits, [value](Form& form) { form.serial.dataBits = value; });
 }
 
 void TioWindow::setParity(const QString& parity)
@@ -1123,7 +1175,7 @@ void TioWindow::setParity(const QString& parity)
     Parity value = Parity::None;
     if (!parseParity(parity.toStdString(), value))
         return;
-    edit([value](Form& form) { form.serial.parity = value; });
+    edit(ConfigKey::Parity, [value](Form& form) { form.serial.parity = value; });
 }
 
 void TioWindow::setStopBits(const QString& bits)
@@ -1131,7 +1183,7 @@ void TioWindow::setStopBits(const QString& bits)
     const int value = bits.toInt();
     if (value != 1 && value != 2)
         return;
-    edit([value](Form& form) { form.serial.stopBits = value; });
+    edit(ConfigKey::StopBits, [value](Form& form) { form.serial.stopBits = value; });
 }
 
 void TioWindow::setFlow(const QString& flow)
@@ -1139,21 +1191,24 @@ void TioWindow::setFlow(const QString& flow)
     Flow value = Flow::None;
     if (!parseFlow(flow.toStdString(), value))
         return;
-    edit([value](Form& form) { form.serial.flow = value; });
+    edit(ConfigKey::Flow, [value](Form& form) { form.serial.flow = value; });
 }
 
+// The choice is a preference, not a resolved backend: "auto" stays "auto" after
+// the form is saved, so another field can never turn it into "wt".
 void TioWindow::setBackend(const QString& id)
 {
-    const Backend value = backendFromId(id.toStdString());
-    if (value == Backend::None)
-        return;
-    const Snapshot snapshot = core().controller().snapshot();
-    const bool available = value == Backend::Wt ? snapshot.backends.wt : snapshot.backends.conhost;
-    if (!available) {
-        emit notice(zh() ? "这台机器没有这个后端" : "this machine does not have that backend");
-        return;
+    const BackendPreference value = backendPreferenceFromId(id.toStdString());
+    if (value != BackendPreference::Auto) {
+        const Snapshot snapshot = core().controller().snapshot();
+        const bool available = value == BackendPreference::Wt ? snapshot.backends.wt
+                                                             : snapshot.backends.conhost;
+        if (!available) {
+            emit notice(zh() ? "这台机器没有这个后端" : "this machine does not have that backend");
+            return;
+        }
     }
-    edit([value](Form& form) { form.backend = value; });
+    edit(ConfigKey::Backend, [value](Form& form) { form.preference = value; });
 }
 
 void TioWindow::refresh()
@@ -1187,10 +1242,13 @@ void TioWindow::openWebLink(const QString& link)
 
 bool TioWindow::save()
 {
-    if (!core().controller().save(m_form)) {
+    // Only the keys the user edited are submitted: a field that moved somewhere
+    // else while the draft was open is not overwritten by this form's copy of it.
+    if (!core().controller().save(m_form, m_edits.keys())) {
         emit notice(zh() ? "配置写不进 dataDir" : "the configuration could not be written");
         return false;
     }
+    m_edits.clear();
     m_dirty = false;
     emit notice(zh() ? "已保存" : "Saved");
     emit changed();
@@ -1214,6 +1272,7 @@ bool TioWindow::launch(bool allowRemoteShare)
         return false;
     }
     m_dirty = false;
+    m_edits.clear();
     emit notice(zh() ? "已启动（不代表端口已打开）" : "Started (the port is not necessarily open)");
     emit changed();
     return true;

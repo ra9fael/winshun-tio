@@ -6,6 +6,12 @@
 // The protocol thread and the GUI thread both reach it, so every access takes
 // the same mutex.
 //
+// The configuration has two owners by design. WinShun's settings page holds the
+// three values it also shows (port, baud rate, backend preference), so its card
+// is the record and this file mirrors it; everything else (data bits, parity,
+// stop bits, flow, sharing) is this plugin's and lives in tio.json. A change
+// made here is sent back to the page, so both faces and the card show one value.
+//
 // No Qt and no windows in this header: only a callback saying "something
 // changed" so the window can repaint.
 #pragma once
@@ -30,6 +36,9 @@ namespace tioplug {
 class Controller {
 public:
     using Notify = std::function<void()>;
+    // Persists values in the host's settings page (Plugin::updateSettings). The
+    // controller calls it after a change that a page-owned key took part in.
+    using SettingsWriter = std::function<void(winshun::Json)>;
 
     // Called on every change, from whichever thread changed the state. A view
     // marshals it to its own thread.
@@ -37,6 +46,12 @@ public:
     {
         const std::lock_guard lock(m_mutex);
         m_notify = std::move(notify);
+    }
+
+    void attachSettingsWriter(SettingsWriter writer)
+    {
+        const std::lock_guard lock(m_mutex);
+        m_settingsWriter = std::move(writer);
     }
 
     void configure(std::wstring pluginDir, std::string dataDir)
@@ -54,14 +69,21 @@ public:
         refresh();
     }
 
-    // What the host's settings page holds (plugin.json's `settings`). It seeds a
-    // value only when `tio.json` has never recorded one: the configuration the
-    // user edited in the search box or the window is the more recent answer, so
-    // a settings change must not silently reset a port back to a default.
+    // What the host's settings page holds (plugin.json's `settings`). The three
+    // keys the page also shows belong to it: a change there is the user's latest
+    // answer, so it is adopted and the rows follow. Applied from
+    // settingsChanged(), and never written back from here.
     void setHostSettings(winshun::Json settings)
     {
         const std::lock_guard lock(m_mutex);
         m_hostSettings = std::move(settings);
+        // Before configure() there is no file yet: applying now would read the
+        // empty configuration and could migrate over the real one. configure()
+        // applies them right after loading.
+        if (!m_configured)
+            return;
+        applySettingsLocked();
+        ensureTabLocked();
     }
 
     // Re-probes backends, re-verifies the package, re-enumerates ports and
@@ -71,6 +93,7 @@ public:
     void refresh()
     {
         Notify notify;
+        winshun::Json publish;
         {
             const std::lock_guard lock(m_mutex);
             m_backends = probeBackends();
@@ -81,8 +104,11 @@ public:
             applySettingsLocked();
             ensureTabLocked();
             refreshIdentityLocked();
+            publish = std::move(m_publishPending);
+            m_publishPending = winshun::Json();
             notify = m_notify;
         }
+        writeHost(publish);
         if (notify)
             notify();
     }
@@ -177,6 +203,7 @@ public:
         Snapshot out;
         out.port = m_form.parsed();
         out.serial = m_form.serial;
+        out.preference = m_form.preference;
         out.backend = m_form.backend;
         out.share = m_form.share;
         out.sharePort = m_form.sharePort;
@@ -204,7 +231,6 @@ public:
         out.readiness = readinessLocked(m_tabs[m_activeTab]);
         out.defaultReadiness = defaultReadinessLocked();
         out.error = m_error;
-        out.diagnostic = diagnosticsLocked();
         return out;
     }
 
@@ -214,48 +240,48 @@ public:
         return m_form;
     }
 
-    // The form the settings file last recorded. The window's dirty marker is
-    // "differs from what is saved", not "differs from what is in memory": an
-    // in-memory preview (a port picked there) is not a save, and the marker
-    // must survive it.
-    Form savedForm() const
-    {
-        const std::lock_guard lock(m_mutex);
-        return m_savedForm;
-    }
-
-    // Persists the form and makes it the configuration. Returns false when the
-    // file could not be written; the in-memory form is still adopted, so the
-    // current session keeps working.
-    bool save(const Form& form)
+    // Persists the edited keys and makes them the configuration. Returns false
+    // when the file could not be written; the in-memory form is still adopted,
+    // so the current session keeps working. A view keeps its own edit list
+    // (FormEdits), so what is saved is what the user changed, never a stale copy
+    // of a field that moved somewhere else while the draft was open.
+    bool save(const Form& form, const std::vector<ConfigKey>& keys)
     {
         Notify notify;
+        winshun::Json publish;
         bool written = false;
         {
             const std::lock_guard lock(m_mutex);
-            adoptLocked(form);
-            written = writeSettingsLocked();
+            adoptKeysLocked(form, keys);
+            written = writeSettingsLocked(keys);
+            publish = publishLocked(keys);
             notify = m_notify;
         }
+        writeHost(publish);
         if (notify)
             notify();
         return written;
     }
 
-    // Adopts the form without writing it. Used by the search box, where each
-    // parameter change is a separate action but a settings write per keystroke
-    // would be wasteful; the caller decides when to persist. This edits the
-    // default configuration only — tabs are bound when created or launched, and
-    // a running session keeps the parameters it started with.
-    void adopt(const Form& form)
+    // Adopts the edited keys without the file write the host's side needs. Used
+    // by the search box, where each parameter change is a separate action but a
+    // settings write per keystroke would be wasteful: private keys are still
+    // written (a handful of bytes), the host is told once per change it did not
+    // already hold. This edits the default configuration only — tabs are bound
+    // when created or launched, and a running session keeps the parameters it
+    // started with.
+    void adopt(const Form& form, const std::vector<ConfigKey>& keys)
     {
         Notify notify;
+        winshun::Json publish;
         {
             const std::lock_guard lock(m_mutex);
-            adoptLocked(form);
-            writeSettingsLocked();
+            adoptKeysLocked(form, keys);
+            writeSettingsLocked(keys);
+            publish = publishLocked(keys);
             notify = m_notify;
         }
+        writeHost(publish);
         if (notify)
             notify();
     }
@@ -264,10 +290,10 @@ public:
     // window edits a copy and saves explicitly; picking a port there must
     // still re-read the identity (capture is automatic, never a button the
     // user must find), so the preview adopts and recaptures without
-    // persisting. The saved form is untouched, so the window's dirty marker
-    // keeps meaning "not saved yet". A port another running session owns is
-    // adopted too: the launch gate names it, and refusing the pick would leave
-    // the window unable to show which port the user just chose.
+    // persisting. A dirty draft lives in the view's own edit list, so an
+    // in-memory preview is never mistaken for a save. A port another running
+    // session owns is adopted too: the launch gate names it, and refusing the
+    // pick would leave the window unable to show which port the user just chose.
     bool preview(const Form& form, std::string& error)
     {
         error.clear();
@@ -300,6 +326,7 @@ public:
         Plan plan;
         LaunchContext context;
         Notify notify;
+        winshun::Json publish;
         SessionTab* tab = nullptr;
 
         // Phase 1: bind a tab, check, plan. All under the lock.
@@ -334,7 +361,8 @@ public:
                 // standalone window passes its own setting through.
                 Form launchForm = tab->form;
                 launchForm.share = tab->form.share && allowRemoteShare;
-                writeSettingsLocked();
+                writeSettingsLocked(allConfigKeys());
+                publish = publishLocked(allConfigKeys());
                 refreshIdentityLocked();
 
                 if (!readinessLocked(*tab).ready()) {
@@ -384,6 +412,7 @@ public:
                 notify = m_notify;
             }
         }
+        writeHost(publish);
         if (notify)
             notify();
         if (!error.empty())
@@ -581,6 +610,7 @@ public:
         const std::wstring dir = shareLogDirLocked();
         if (dir.empty())
             return std::wstring();
+        ::CreateDirectoryW(dir.c_str(), nullptr);
         SYSTEMTIME now{};
         ::GetLocalTime(&now);
         wchar_t name[64];
@@ -700,12 +730,22 @@ public:
         return writeUiLocked();
     }
 
-    // Where the window's auto-log writes. Created on demand: the folder only
-    // exists because something is logged.
+    // The log folder's path, for display and listing: reading it creates
+    // nothing, so a data folder gains "sessions" only once a log can exist.
     std::wstring shareLogDir() const
     {
         const std::lock_guard lock(m_mutex);
         return shareLogDirLocked();
+    }
+
+    // The folder for an explicit open or a first log write: created on demand.
+    std::wstring ensureShareLogDir() const
+    {
+        const std::lock_guard lock(m_mutex);
+        const std::wstring dir = shareLogDirLocked();
+        if (!dir.empty())
+            ::CreateDirectoryW(dir.c_str(), nullptr);
+        return dir;
     }
 
 private:
@@ -736,9 +776,7 @@ private:
     {
         if (m_dataDir.empty())
             return std::wstring();
-        const std::wstring dir = winshun::wide(m_dataDir) + L"\\sessions";
-        ::CreateDirectoryW(dir.c_str(), nullptr);
-        return dir;
+        return winshun::wide(m_dataDir) + L"\\sessions";
     }
 
     // wt is handed the tio path inside a command line that Windows Terminal
@@ -822,17 +860,29 @@ private:
 
     void applySettingsLocked()
     {
-        // A value comes from tio.json when it holds one, else from the host's
-        // settings, else from the defaults in Serial. The order matters: what the
-        // user edited in the search box or the window is more recent than the
-        // settings page, so the page must not reset it.
-        const auto saved = [this](const char* key) { return m_persisted.has(key); };
+        // Two rules, one per kind of key.
+        //
+        // A key the host's page also holds belongs to the page: when it has
+        // recorded one, that is the user's latest answer, so it wins over a copy
+        // this file kept from before the page owned the key. Without a record,
+        // the file's old value still stands (an upgraded install), else the
+        // built-in default.
+        //
+        // Everything else is this plugin's: the file wins, and the page is only a
+        // migration source for values it still carries from an older manifest.
+        const auto recorded = [this](const char* key) { return m_hostSettings.has(key); };
+        const auto publicValue = [this, &recorded](const char* key) -> const winshun::Json& {
+            return recorded(key) ? m_hostSettings[key] : m_persisted[key];
+        };
+        const auto privateValue = [this](const char* key) -> const winshun::Json& {
+            return m_persisted.has(key) ? m_persisted[key] : m_hostSettings[key];
+        };
 
-        // Port: the saved one, else the settings page's, else the first this
-        // machine offers. The default is only a starting point; nothing launches
-        // by itself.
-        Port port = parsePort(saved("port") ? m_persisted["port"].toString()
-                                            : m_hostSettings["port"].toString());
+        const Form before = m_form;
+
+        // Port: the page's, else the file's, else the first this machine offers.
+        // The default is only a starting point; nothing launches by itself.
+        Port port = parsePort(publicValue("port").toString());
         if (!port.ok() && !m_ports.empty())
             port = parsePort("COM" + std::to_string(m_ports.front().com));
         if (port.ok())
@@ -853,74 +903,216 @@ private:
             }
             return fallback;
         };
-        const auto setting = [this, &saved](const char* key) -> const winshun::Json& {
-            return saved(key) ? m_persisted[key] : m_hostSettings[key];
+        // The same for a switch: the page sends a boolean, an old INI line reaches
+        // us as text.
+        const auto boolean = [](const winshun::Json& value, bool fallback) {
+            if (value.isBool())
+                return value.toBool(fallback);
+            if (value.isString())
+                return value.toString() == "true" || value.toString() == "1";
+            return fallback;
         };
-        serial.baudrate = integer(setting("baudrate"), serial.baudrate);
-        serial.dataBits = integer(setting("dataBits"), serial.dataBits);
-        serial.stopBits = integer(setting("stopBits"), serial.stopBits);
+        serial.baudrate = integer(publicValue("baudrate"), serial.baudrate);
+        serial.dataBits = integer(privateValue("dataBits"), serial.dataBits);
+        serial.stopBits = integer(privateValue("stopBits"), serial.stopBits);
         Parity parity = serial.parity;
-        if (parseParity(setting("parity").toString(), parity))
+        if (parseParity(privateValue("parity").toString(), parity))
             serial.parity = parity;
         Flow flow = serial.flow;
-        if (parseFlow(setting("flow").toString(), flow))
+        if (parseFlow(privateValue("flow").toString(), flow))
             serial.flow = flow;
         m_form.serial = serial;
 
-        // Backend: "auto" in the settings page is the preference order, and so is
-        // a missing value. A saved choice wins while the machine still has it.
-        Backend chosen = backendFromId(setting("backend").toString());
-        m_form.backend = resolveBackend(m_backends, chosen);
+        // The preference is what the page holds; a missing value means the
+        // preference order, and an older file may carry the resolved backend
+        // ("wt") or "none", both of which read as a pinned choice or auto.
+        m_form.preference = backendPreferenceFromId(publicValue("backend").toString());
+        resolveBackendLocked(m_form);
 
         // Sharing is on by default (the standalone window is its local
         // consumer); the user may turn it off or change the port in the
         // standalone window. The search box still launches without it.
-        m_form.share = setting("share").toBool(true);
-        m_form.sharePort = integer(setting("sharePort"), 54321);
+        m_form.share = boolean(privateValue("share"), true);
+        m_form.sharePort = integer(privateValue("sharePort"), 54321);
         if (m_form.sharePort < 1024 || m_form.sharePort > 65535)
             m_form.sharePort = 54321;
-        m_savedForm = m_form;
+
+        // A tab that still holds the previous defaults is not a customization:
+        // it follows them, so a window left open shows what the page now says. A
+        // tab the user gave its own parameters keeps them, and no session is
+        // started, stopped or reconfigured here.
+        if (!sameForm(before, m_form)) {
+            for (SessionTab& tab : m_tabs) {
+                if (tab.session.active() || tab.session.phase == Phase::Validating)
+                    continue;
+                if (sameForm(tab.form, before))
+                    tab.form = m_form;
+            }
+        }
+
+        // Migration, once: advanced keys the page still carries (a manifest from
+        // before they moved here) are written into the file, and page-owned keys
+        // only the file has are handed to the page, so both sides hold the value
+        // the user actually configured.
+        if (!m_migrated) {
+            m_migrated = true;
+            bool fileWrite = false;
+            for (const ConfigKey key : advancedConfigKeys()) {
+                const char* id = keyId(key);
+                if (!m_persisted.has(id) && m_hostSettings.has(id))
+                    fileWrite = true;
+            }
+            if (fileWrite)
+                writeSettingsLocked(advancedConfigKeys());
+            winshun::Json::Object out;
+            if (m_persisted.has("port") && !recorded("port"))
+                out["port"] = m_persisted["port"].toString();
+            if (m_persisted.has("baudrate") && !recorded("baudrate"))
+                out["baudrate"] = static_cast<long long>(m_form.serial.baudrate);
+            if (m_persisted.has("backend") && !recorded("backend"))
+                out["backend"] = std::string(backendPreferenceId(m_form.preference));
+            if (!out.empty())
+                m_publishPending = winshun::Json(std::move(out));
+        }
     }
 
-    void adoptLocked(const Form& form)
+    // The tio.json key for a configuration key. The three the page owns have
+    // names of their own there too, so a file from before the split is readable.
+    static const char* keyId(ConfigKey key)
     {
-        m_form = form;
+        switch (key) {
+        case ConfigKey::Port: return "port";
+        case ConfigKey::Baudrate: return "baudrate";
+        case ConfigKey::Backend: return "backend";
+        case ConfigKey::DataBits: return "dataBits";
+        case ConfigKey::Parity: return "parity";
+        case ConfigKey::StopBits: return "stopBits";
+        case ConfigKey::Flow: return "flow";
+        case ConfigKey::Share: return "share";
+        case ConfigKey::SharePort: return "sharePort";
+        }
+        return "";
+    }
+
+    // Takes only the keys the caller says the user edited; the rest of the form
+    // stays as it is, so a stale copy cannot undo an outside change.
+    void adoptKeysLocked(const Form& form, const std::vector<ConfigKey>& keys)
+    {
+        for (const ConfigKey key : keys) {
+            switch (key) {
+            case ConfigKey::Port: m_form.port = form.port; break;
+            case ConfigKey::Baudrate: m_form.serial.baudrate = form.serial.baudrate; break;
+            case ConfigKey::Backend: m_form.preference = form.preference; break;
+            case ConfigKey::DataBits: m_form.serial.dataBits = form.serial.dataBits; break;
+            case ConfigKey::Parity: m_form.serial.parity = form.serial.parity; break;
+            case ConfigKey::StopBits: m_form.serial.stopBits = form.serial.stopBits; break;
+            case ConfigKey::Flow: m_form.serial.flow = form.serial.flow; break;
+            case ConfigKey::Share: m_form.share = form.share; break;
+            case ConfigKey::SharePort: m_form.sharePort = form.sharePort; break;
+            }
+        }
         resolveBackendLocked(m_form);
     }
 
-    // A backend this machine does not have cannot stay in a form: it would
-    // promise a terminal that will not start.
+    // The preference decides, never the resolved backend: a pinned backend this
+    // machine lacks falls back, and "auto" stays "auto" however often the form is
+    // saved.
     void resolveBackendLocked(Form& form) const
     {
-        if (form.backend != Backend::None || m_backends.wt || m_backends.conhost)
-            form.backend = resolveBackend(m_backends, form.backend);
+        form.backend = resolvePreference(m_backends, form.preference);
     }
 
-    bool writeSettingsLocked()
+    // Writes the private keys among `keys` into tio.json. The three the page
+    // holds are not kept there any more: one owner, so the card and the plugin
+    // cannot disagree. The rest of the file (the window's ui block, the package
+    // version) is carried along, so saving one never drops another.
+    bool writeSettingsLocked(const std::vector<ConfigKey>& keys)
     {
-        // Start from what is on disk: the file also carries the window's ui
-        // block, and a save must not drop a fold the user chose.
         winshun::Json::Object object
             = m_persisted.isObject() ? m_persisted.toObject() : winshun::Json::Object{};
         object["packageVersion"] = m_packageVersion;
-        const Port port = m_form.parsed();
-        object["port"] = port.ok() ? "COM" + std::to_string(port.com) : "";
-        object["baudrate"] = static_cast<long long>(m_form.serial.baudrate);
-        object["dataBits"] = static_cast<long long>(m_form.serial.dataBits);
-        object["parity"] = std::string(parityName(m_form.serial.parity));
-        object["stopBits"] = static_cast<long long>(m_form.serial.stopBits);
-        object["flow"] = std::string(flowName(m_form.serial.flow));
-        object["backend"] = std::string(backendId(m_form.backend));
         object.erase("capture");
-        object["share"] = m_form.share;
-        object["sharePort"] = static_cast<long long>(m_form.sharePort);
-        const bool written = writeSettingsObjectLocked(object);
-        // The saved form is what "dirty" is measured against, whether or not
-        // the file took the write: a failed write must not look saved.
-        if (written) {
-            m_savedForm = m_form;
+        object.erase("port");
+        object.erase("baudrate");
+        object.erase("backend");
+        for (const ConfigKey key : keys) {
+            if (hostOwned(key))
+                continue;
+            switch (key) {
+            case ConfigKey::DataBits:
+                object["dataBits"] = static_cast<long long>(m_form.serial.dataBits);
+                break;
+            case ConfigKey::Parity: object["parity"] = std::string(parityName(m_form.serial.parity)); break;
+            case ConfigKey::StopBits:
+                object["stopBits"] = static_cast<long long>(m_form.serial.stopBits);
+                break;
+            case ConfigKey::Flow: object["flow"] = std::string(flowName(m_form.serial.flow)); break;
+            case ConfigKey::Share: object["share"] = m_form.share; break;
+            case ConfigKey::SharePort: object["sharePort"] = static_cast<long long>(m_form.sharePort); break;
+            case ConfigKey::Port:
+            case ConfigKey::Baudrate:
+            case ConfigKey::Backend: break;
+            }
         }
-        return written;
+        return writeSettingsObjectLocked(object);
+    }
+
+    // The page-owned values among `keys` that the page does not already hold, so
+    // a change is announced once and an unchanged value is never re-sent (the
+    // host answers a difference with settingsChanged; sending the same value
+    // again would be an echo).
+    winshun::Json publishLocked(const std::vector<ConfigKey>& keys)
+    {
+        winshun::Json::Object out;
+        for (const ConfigKey key : keys) {
+            switch (key) {
+            case ConfigKey::Port: {
+                const Port port = m_form.parsed();
+                const std::string value = port.ok() ? "COM" + std::to_string(port.com) : std::string();
+                if (!m_hostSettings.has("port") || m_hostSettings["port"].toString() != value) {
+                    out["port"] = value;
+                    m_hostSettings.set("port", value);
+                }
+                break;
+            }
+            case ConfigKey::Baudrate: {
+                const long long value = m_form.serial.baudrate;
+                if (!m_hostSettings.has("baudrate") || m_hostSettings["baudrate"].toInt(-1) != value) {
+                    out["baudrate"] = value;
+                    m_hostSettings.set("baudrate", winshun::Json(value));
+                }
+                break;
+            }
+            case ConfigKey::Backend: {
+                const std::string value = backendPreferenceId(m_form.preference);
+                if (!m_hostSettings.has("backend") || m_hostSettings["backend"].toString() != value) {
+                    out["backend"] = value;
+                    m_hostSettings.set("backend", value);
+                }
+                break;
+            }
+            case ConfigKey::DataBits:
+            case ConfigKey::Parity:
+            case ConfigKey::StopBits:
+            case ConfigKey::Flow:
+            case ConfigKey::Share:
+            case ConfigKey::SharePort: break;
+            }
+        }
+        return winshun::Json(std::move(out));
+    }
+
+    void writeHost(const winshun::Json& values)
+    {
+        if (!values.isObject() || values.toObject().empty())
+            return;
+        SettingsWriter writer;
+        {
+            const std::lock_guard lock(m_mutex);
+            writer = m_settingsWriter;
+        }
+        if (writer)
+            writer(values);
     }
 
     // One writer for every persisted shape: the form fields and the window's
@@ -1030,6 +1222,8 @@ private:
             text += ")";
         }
         text += "\nbackend   : " + std::string(backendId(m_form.backend));
+        if (m_form.preference == BackendPreference::Auto)
+            text += " (auto)";
         if (m_backends.wt)
             text += " (wt " + m_backends.wtVersion + ")";
         text += "\n";
@@ -1070,7 +1264,9 @@ private:
 
     mutable std::mutex m_mutex;
     Notify m_notify;
+    SettingsWriter m_settingsWriter;
     bool m_configured = false;
+    bool m_migrated = false;
     std::wstring m_pluginDir;
     std::wstring m_runtimeDir;
     std::string m_dataDir;
@@ -1083,6 +1279,9 @@ private:
     std::vector<PortInfo> m_ports;
     winshun::Json m_persisted;
     winshun::Json m_hostSettings;
+    // Page-owned values the migration found only in the file, sent once by the
+    // next refresh (it cannot be sent while the lock is held).
+    winshun::Json m_publishPending;
     std::string m_packageVersion;
     std::string m_errorCode;
     std::vector<std::string> m_collapsed; // folded card ids (TIO-008)
@@ -1095,7 +1294,6 @@ private:
     int m_shareHexRow = 16;
     bool m_shareHexAscii = false;
     std::wstring m_identity;
-    Form m_savedForm;
     std::wstring m_identityTime;
     std::wstring m_identityName;
     DeviceDetails m_identityDetails;

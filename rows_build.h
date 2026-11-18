@@ -22,54 +22,17 @@ inline std::vector<Row> buildRows(const Snapshot& s, Browse browse, const Lang& 
     if (browse != Browse::None) {
         rows.push_back(backRow(lang));
 
-        if (browse == Browse::Ports) {
-            if (s.ports.empty()) {
-                Row none;
-                none.id = "empty";
-                none.title = lang.noPorts;
-                none.disabled = true;
-                rows.push_back(std::move(none));
-            }
-            for (const PortInfo& info : s.ports) {
-                rows.push_back(portRow(info.com,
-                    winshun::utf8(info.instanceId), s.port.ok() && s.port.com == info.com, lang));
-            }
-            return rows;
-        }
-
-        if (browse == Browse::Baudrates) {
-            int count = 0;
-            const int* rates = baudrates(count);
-            for (int i = 0; i < count; ++i) {
-                rows.push_back(baudRow(rates[i], s.serial.baudrate == rates[i], lang));
-            }
-            return rows;
-        }
-
-        // The diagnostics view: one read-only row per line of the report, so it
-        // can be read in the list rather than only copied. The first row also
-        // carries the whole report for copying (Shift+Enter). Back comes first,
-        // like every other candidate list.
-        if (browse == Browse::Diagnostics) {
-            rows.push_back(backRow(lang));
-            for (Row& row : buildDiagnosticsRows(s.diagnostic, lang))
-                rows.push_back(std::move(row));
-            return rows;
-        }
-
-        rows.push_back(backendRow(Backend::Wt, s.backends.wt, s.backends.wtVersion,
-            s.backend == Backend::Wt, lang));
-        rows.push_back(backendRow(Backend::Conhost, s.backends.conhost, std::string(),
-            s.backend == Backend::Conhost, lang));
+        // The baud list: the usual rates, plus the current one when the user set
+        // a custom value, so what is on screen is always one of the rows.
+        for (const int rate : baudrateChoices(s.serial.baudrate))
+            rows.push_back(baudRow(rate, s.serial.baudrate == rate, lang));
         return rows;
     }
 
     // ---- the main list ----
-    // One row per serial port. The port is the choice a launch really makes, so
-    // a machine with two devices offers two rows instead of one row pinned to
-    // whatever the configuration happens to hold.
-    rows.push_back(groupRow("launch", lang.groupLaunch));
-
+    // One row per serial port, then the baud shortcuts and the window entry.
+    // No group captions: every row says what it does on its own, and the list
+    // stays short enough to read at a glance.
     std::vector<int> ports;
     for (const PortInfo& info : s.ports)
         ports.push_back(info.com);
@@ -111,9 +74,9 @@ inline std::vector<Row> buildRows(const Snapshot& s, Browse browse, const Lang& 
         row.id = "port:" + std::to_string(com);
         row.icon = active ? "glyph:U+E71A" : "glyph:U+E768";
         row.title = "tio COM" + std::to_string(com);
-        row.subtitle = "COM" + std::to_string(com) + lang.arrow + Port::devicePath(com - 1)
-            + lang.separator + serialText(s.serial) + lang.separator
-            + backendLabel(s.backend, lang);
+        // The mapping is what tio itself will open; the serial parameters and the
+        // backend are the same for every row, so they live on the config row.
+        row.subtitle = "COM" + std::to_string(com) + lang.arrow + Port::devicePath(com - 1);
         // A running session is what the row stops; the port only changes when
         // the row starts it.
         row.action = active ? "stopPort" : "launchPort";
@@ -141,7 +104,6 @@ inline std::vector<Row> buildRows(const Snapshot& s, Browse browse, const Lang& 
 
     // Every session the window opened gets its own row: the search box stays
     // honest about processes that are out there while the user works here.
-    bool anyOther = false;
     for (const SessionView& view : s.sessions) {
         // A session on a listed port is already that port's row: it must not
         // appear twice, once to start and once to stop.
@@ -150,10 +112,6 @@ inline std::vector<Row> buildRows(const Snapshot& s, Browse browse, const Lang& 
         if (listedAbove || (!view.session.active()
             && view.session.phase != Phase::Validating))
             continue;
-        if (!anyOther) {
-            rows.push_back(groupRow("sessions", lang.groupSessions));
-            anyOther = true;
-        }
         Row row;
         row.id = "stop:" + std::to_string(view.form.parsed().com);
         row.title = "tio COM" + std::to_string(view.form.parsed().com);
@@ -174,53 +132,34 @@ inline std::vector<Row> buildRows(const Snapshot& s, Browse browse, const Lang& 
         rows.push_back(std::move(row));
     }
 
-    rows.push_back(groupRow("parameters", lang.groupParameters));
-    const std::string com = s.port.ok() ? "COM" + std::to_string(s.port.com) : "—";
-    rows.push_back(parameterRow("port", lang.port, com, "openPorts"));
-    rows.push_back(parameterRow("baud", lang.baudrate, std::to_string(s.serial.baudrate), "openBaudrates"));
-    rows.push_back(parameterRow("dataBits", lang.dataBits, std::to_string(s.serial.dataBits), "cycleDataBits"));
-    rows.push_back(parameterRow("parity", lang.parity, parityName(s.serial.parity), "cycleParity"));
-    rows.push_back(parameterRow("stopBits", lang.stopBits, std::to_string(s.serial.stopBits), "cycleStopBits"));
-    rows.push_back(parameterRow("flow", lang.flow, flowName(s.serial.flow), "cycleFlow"));
-    rows.push_back(parameterRow("backend", lang.backend, backendLabel(s.backend, lang), "openBackends"));
-
-    // The standalone window, as its own row: the visible way in. Ctrl+Enter on
-    // the launch row is the other way; this one is for the user who is reading
-    // the list rather than the footer.
+    // The configuration, said once: the serial parameters and the backend are
+    // global, so one row shows the whole picture and Enter opens the window,
+    // where every parameter and the defaults live.
     {
-        Row window;
-        window.id = "openWindow";
-        window.title = lang.openWindow;
-        window.subtitle = lang.openWindowNote;
-        window.icon = "glyph:U+E8A9";
-        window.action = "openWindow";
-        window.actionKey = "Enter";
-        window.score = 70;
-        rows.push_back(std::move(window));
+        Row baud;
+        baud.id = "baud";
+        baud.title = lang.baudrate;
+        baud.subtitle = std::to_string(s.serial.baudrate);
+        baud.icon = "glyph:U+E8B7";
+        baud.action = "openBaudrates";
+        baud.actionKey = "Enter";
+        baud.copy = baud.subtitle;
+        baud.moreActions.emplace_back("openWindow", "Ctrl+Enter");
+        baud.score = 60;
+        rows.push_back(std::move(baud));
     }
 
-    rows.push_back(groupRow("information", lang.groupInformation));
     {
-        Row control;
-        control.id = "control";
-        control.title = lang.control;
-        control.subtitle = lang.controlNote;
-        control.icon = "color:#E8A33D";
-        control.disabled = true;
-        control.score = 40;
-        rows.push_back(std::move(control));
-
-        Row diag;
-        diag.id = "diagnostics";
-        diag.title = lang.diagnostics;
-        diag.subtitle = lang.diagnosticsShow;
-        diag.icon = "glyph:U+E9D9";
-        diag.action = "diagnostics";
-        diag.actionKey = "Enter";
-        // The whole report on Shift+Enter, without opening anything.
-        diag.copy = s.diagnostic;
-        diag.score = 39;
-        rows.push_back(std::move(diag));
+        Row config;
+        config.id = "config";
+        config.title = lang.openWindow;
+        config.subtitle = serialText(s.serial) + lang.separator
+            + backendChoiceLabel(s.preference, s.backend, lang);
+        config.icon = "glyph:U+E8A9";
+        config.action = "openWindow";
+        config.actionKey = "Enter";
+        config.score = 59;
+        rows.push_back(std::move(config));
     }
     return rows;
 }

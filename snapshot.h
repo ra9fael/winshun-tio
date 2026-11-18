@@ -28,6 +28,8 @@ struct Snapshot {
     // session starts from. It is not a tab; a tab binds a port to a process.
     Port port;
     Serial serial;
+    // The user's choice and what this machine resolves it to (`backend`).
+    BackendPreference preference = BackendPreference::Auto;
     Backend backend = Backend::None;
     bool share = false;
     int sharePort = 54321;
@@ -47,7 +49,6 @@ struct Snapshot {
     Readiness readiness;         // the focused tab's gates (the Launch button)
     Readiness defaultReadiness;  // the default form's gates (the search box row)
     std::wstring error;
-    std::string diagnostic;
 };
 
 } // namespace tioplug

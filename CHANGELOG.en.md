@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.2.0] - 2026-11-18
+
+### Configuration ownership: the host's settings page and the plugin split the keys
+
+- **Port, baud rate and backend preference move to WinShun's settings page** (`minWinShun` raised to 0.30.0, using the `winshun/settings/update` write-back). Changing the port or baud rate in the search box, or the backend in the window, writes back to the page: the plugin's card and the plugin show one value, kept across restarts. These three no longer go into `tio.json`.
+- A settings-page change takes effect at once, even while `tio.json` still holds an older value — migration hands the file's old public keys to the page once, and the page is the authority afterwards.
+- **The backend preference is kept apart from the resolved backend**: `auto` stays `auto` instead of being pinned to `wt` by a save; a backend this machine lacks falls back in the auto order at launch, and the preference itself is unchanged. The diagnostics show the resolution and the preference.
+- **The advanced keys are the plugin's**: data bits, parity, stop bits, flow control and remote sharing live in `tio.json` alone; keys the older manifest carried are migrated into the file on first load.
+- The search box stays lean on purpose: one launch row per port (the subtitle carries only the `/dev/ttyS` mapping), the baud-rate shortcuts, and one "open standalone window" row that doubles as the configuration summary. The port row, the backend list, the control-line note and the diagnostics view left the search box — every parameter lives in the window, the control-line note on the window's Port & parameters card, the report in the window's diagnostics card and in `details()`.
+- The window's baud rate takes any positive integer (the dropdown is shortcuts, not a limit); the shared port is constrained to 1024–65535.
+- **A save changes defaults only**: a running session keeps the parameters it started with, and a defaults change never starts, stops or reconfigures a session; a clean form follows outside updates, and a dirty form submits only the keys the user edited.
+- The manifest declares `settingsWindow: true`: WinShun's settings page opens the standalone window from its "Settings" button; `showSettings()` never touches a serial port.
+
+### Tests
+
+- 292 pure-core assertions (preference resolution, `FormEdits` key sets, `sameForm`, the main list's shape).
+- 125 window-model assertions (custom baud rate accepted/refused, auto preference persistence, key-scoped saves).
+- 52 protocol round trips: the `winshun/settings/update` handover, a host value overriding a local one, migration filling only what the page lacks.
+
 ## [0.1.4] - 2026-11-14
 
 ### Fixes (packaging)

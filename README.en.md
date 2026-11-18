@@ -1,8 +1,8 @@
 # ra9fael.tio — a serial terminal plugin for WinShun
 
-Opens a serial terminal with [tio](https://github.com/tio/tio) bundled inside the plugin package. **Set the parameters and launch from the search box**, or open a standalone window to configure it.
+Opens a serial terminal with [tio](https://github.com/tio/tio) bundled inside the plugin package. **Pick the port in the search box and press Enter to start**; every parameter, remote sharing and the defaults live in the standalone window.
 
-Current version: **v0.1.4**.
+Current version: **v0.2.0**.
 
 ## Interactive online demo (no install)
 
@@ -29,7 +29,7 @@ Note: this is a **UI mockup** with hard-coded sample devices (COM8/COM9). It ope
 - **Local package**: download the `.wsplugin` from [Releases](https://github.com/ra9fael/winshun-tio/releases) and install it from the file under "Installed"
 - **Manual**: unpack into `%LOCALAPPDATA%\WinShun\plugins\ra9fael.tio\` (`plugin.json` at the folder root) and restart WinShun
 
-The first enable asks for `processes` (start the terminal), `ui` (show the window) and `clipboard:write` (copy shared content, the port or diagnostics); bidirectional remote sharing additionally requests listen permission for TCP `1024-65535`. WinShun asks again when a plugin update adds a permission. Requires WinShun **0.22.0** or later (the shared-Qt contract). **No MSYS2 install is needed**: tio and the DLLs it actually imports ship in the package (8 files, 6.6 MB).
+The first enable asks for `processes` (start the terminal), `ui` (show the window) and `clipboard:write` (copy shared content, the port or diagnostics); bidirectional remote sharing additionally requests listen permission for TCP `1024-65535`. WinShun asks again when a plugin update adds a permission. Requires WinShun **0.30.0** or later (the settings write-back and `settingsWindow` contracts). **No MSYS2 install is needed**: tio and the DLLs it actually imports ship in the package (8 files, 6.6 MB).
 
 ## Using it
 
@@ -38,34 +38,26 @@ The first enable asks for `processes` (start the terminal), `ui` (show the windo
 Type `tio` and Enter to enter the command; it answers with a group of rows:
 
 ```text
-Launch (one row per serial port)
-  ⏻  tio COM8
-     COM8 → /dev/ttyS7 · 115200 8n1 · none · Windows Terminal
-  ⏻  tio COM9
-     COM9 → /dev/ttyS8 · 115200 8n1 · none · Windows Terminal
-Parameters (Enter edits in place)
-  ⌁  Port        COM8
-  ⌁  Baud rate   115200
-  ⌁  Data bits   8
-  ⌁  Parity      none
-  ⌁  Stop bits   1
-  ⌁  Flow control none
-  ⌁  Backend     Windows Terminal
-Information
-  !  Control lines DTR / RTS   defaults not measured · no such CLI option in tio
-  ▤  Diagnostics               expand (Shift+Enter copies)
+  ⏻  tio COM8      COM8 → /dev/ttyS7
+  ⏻  tio COM9      COM9 → /dev/ttyS8
+  ⌁  Baud rate     115200
+  ⌂  Open standalone window   115200 8n1 · none · Automatic (Windows Terminal)
 ```
 
 | Row | What Enter does |
 |---|---|
 | Launch row (one per port) | Starts tio on **that row's own port** once the six checks pass; if that port is running, Enter stops that session |
-| Port / baud rate / backend | Replaces the list in place, Esc goes back, the current value is ticked |
-| Data bits / parity / stop bits / flow | Cycles to the next value in place |
-| Diagnostics | **Expands a diagnostics view**: the report is shown line by line in the list, Back/Esc returns; `Shift+Enter` copies the whole report |
+| Baud rate | The common rates replace the list in place, Esc goes back, the current value is ticked; the window also takes any positive integer, and the row's menu opens the window with Ctrl+Enter |
+| Open standalone window | The whole configuration and backend on one row; Enter opens the standalone window (every serial parameter, sessions, remote sharing and the defaults live there) |
 
-The port is no longer buried among the parameters: every enumerated serial port gets its own launch row, so Enter starts that port directly instead of going through the Port sub-list first. A row carries only its port; baud rate, parity and backend still come from the current parameters.
+There are no group captions: every row says what it does on its own, and a running session's row is prefixed with "Running". The serial parameters and the backend are global, so they are shown once, on the window row; a launch row carries only its own port and the `/dev/ttyS` mapping. There is no control-line option in tio and the default behaviour was never measured — that note lives on the window's Port & parameters card, not in the list.
 
-A change is written to disk at once: the search box has nowhere to put a Save button. Launching saves first too, so what runs is what the next query shows. The plugin.json settings page only supplies **defaults** — a key is taken from it only while 	io.json has never recorded one, so a value edited here wins.
+**Where the configuration lives, split by key:**
+
+- **Port, baud rate and backend preference are WinShun's settings** (the three on the plugin's card). Changing the baud rate in the search box, or the port or backend in the window, writes back to the settings page: the card and the plugin show one value, kept across restarts. These three no longer go into `tio.json`. A backend this machine lacks falls back in the auto order at launch, but the preference itself stays as set.
+- **Data bits, parity, stop bits, flow control and remote sharing are the plugin's own**, edited only in the standalone window and stored in `dataDir/tio.json`.
+
+A launch takes what is on screen: it writes the port/baud rate/backend it started with back to the settings page, the rest into tio.json. **Saving changes the defaults for later sessions** — a running session keeps the parameters it started with, and new parameters mean restarting it; a settings-page change never starts, stops or reconfigures a session.
 
 ### Path B: the standalone window
 
@@ -88,7 +80,7 @@ Closing the window while a session runs offers three choices: keep it running in
 | Ownership | **limited**, spelled out in the window | **owned** |
 | Window | Windows Terminal's | goes away with tio |
 
-A machine without Windows Terminal falls back to conhost automatically; choosing a backend the machine lacks is refused, and the UI lists it as unavailable with the reason.
+A machine without Windows Terminal falls back to conhost automatically; a pinned backend this machine lacks is not started — the launch falls back in the auto order, the preference itself stays as set, and the window spells out what it resolved to.
 
 ### COMn → /dev/ttyS(n-1)
 
@@ -138,9 +130,9 @@ pwsh tools\remote_share_gui.ps1 -KeepData
 In the window, open Session → Advanced · bidirectional serial sharing and confirm the switch and TCP `54321`; Launch and a shared-session Restart ask for confirmation again. The wrapper only opens the window: it does not start tio, overwrite the repository-root binaries, or touch the installed WinShun's configuration.
 
 ```bat
-build\msvc\tests\tio_tests.exe          :: 280 pure-core assertions (no Qt, no Windows)
+build\msvc\tests\tio_tests.exe          :: 292 pure-core assertions (no Qt, no Windows)
 build\msvc\tests\tio_native_probe.exe   :: 30 real-machine checks (it does start processes)
-python tests\integration.py             :: 70 protocol round trips (--launch adds 6 more real start/stop checks)
+python tests\integration.py             :: 52 protocol round trips (--launch adds 7 more real start/stop checks)
 python tools\package.py --dev           :: build the .wsplugin and print its SHA-256
 ```
 

@@ -6,7 +6,7 @@ does (stdin/stdout JSON-RPC, `WS_QT_DIR` set), and walks the same requests the
 search box would send. It does not open the launcher window and does not start
 tio: an L3 run must not leave a serial port held.
 
-Host requirements: an installed WinShun 0.22.0 or later (`C:\\Program Files\\WinShun`
+Host requirements: an installed WinShun 0.30.0 or later (`C:\\Program Files\\WinShun`
 by default, or `--host <folder>`), whose own Qt the plugin will load.
 
 Exit code 0 only when every check passed.
@@ -79,7 +79,7 @@ class Host:
     def initialize(self) -> dict:
         return self.call("initialize", {
             "protocolVersion": "1",
-            "winshun": "0.22.0",
+            "winshun": "0.30.0",
             "pluginDir": str(self.plugin_dir),
             "dataDir": str(self.data_dir),
             "locale": self.locale,
@@ -141,25 +141,25 @@ def main() -> int:
                 "text": "", "raw": "tio", "limit": 200}, 2)
             items = (answer.get("result") or {}).get("items") or []
             ids = [item.get("id") for item in items]
-            check(len(items) >= 11, "the grouped rows arrive", str(len(items)))
+            check(len(items) >= 4, "the lean rows arrive", str(len(items)))
             launches = [i for i in ids if str(i).startswith("port:")]
             check(bool(launches), "every enumerated port has its own row", str(launches))
-            check("port" in ids and "backend" in ids, "the parameter rows are there")
+            check("baud" in ids and "config" in ids, "the parameter rows are there")
 
             # A replace round trip, without launching anything.
-            ports = plugin.call("action", {
-                "command": "tio", "action": "openPorts", "text": "",
-                "item": {"id": "port"}, "trigger": "keyword", "files": []}, 3)
-            effects = (ports.get("result") or {}).get("effects") or []
+            bauds = plugin.call("action", {
+                "command": "tio", "action": "openBaudrates", "text": "",
+                "item": {"id": "baud"}, "trigger": "keyword", "files": []}, 3)
+            effects = (bauds.get("result") or {}).get("effects") or []
             replaced = next((e for e in effects if e.get("type") == "replace"), None)
-            check(replaced is not None, "the port list comes back as a replace effect",
+            check(replaced is not None, "the baud list comes back as a replace effect",
                   str([e.get("type") for e in effects]))
             if replaced:
                 rows = replaced.get("items") or []
                 check(bool(rows) and rows[0].get("id") == "back",
-                      "the port list starts with the back row")
+                      "the baud list starts with the back row")
 
-            details = plugin.call("details", {"item": {"id": "control"}, "text": ""}, 4)
+            details = plugin.call("details", {"item": {"id": "config"}, "text": ""}, 4)
             text = (details.get("result") or {}).get("text") or ""
             check("integrity" in text, "details reports package integrity")
             check("connected" not in text.lower(), "details never claims a connection")
@@ -187,7 +187,7 @@ def main() -> int:
             again = plugin.call("query", {
                 "queryId": 2, "command": "tio", "trigger": "keyword", "keyword": "tio",
                 "text": "", "raw": "tio", "limit": 200}, 6)
-            check(len((again.get("result") or {}).get("items") or []) >= 11,
+            check(len((again.get("result") or {}).get("items") or []) >= 4,
                   "the protocol still answers with the window open")
         finally:
             plugin.close()

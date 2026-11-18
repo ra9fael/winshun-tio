@@ -8,8 +8,8 @@ Both paths share one state and one core. The split exists so **the pure logic ca
 
 | File | Layer | Content |
 |---|---|---|
-| [logic.h](../logic.h) | pure core | COMn parsing and the n−1 mapping, parameter validation, argv quoting, backend choice, launch plan, session state machine, the six gates. **No Windows dependency** |
-| [rows.h](../rows.h) | pure core | the row model: `Row`, `Lang`, candidate-row builders, the cycle actions. Depends only on `logic.h` |
+| [logic.h](../logic.h) | pure core | COMn parsing and the n−1 mapping, parameter validation, argv quoting, the backend preference and its resolution, launch plan, session state machine, `ConfigKey`/`FormEdits`, the six gates. **No Windows dependency** |
+| [rows.h](../rows.h) | pure core | the row model: `Row`, `Lang`, candidate-row builders, the backend choice label. Depends only on `logic.h` |
 | [native.h](../native.h) | Win32 | read-only enumeration (SetupDi + SERIALCOMM), SHA-256 + PE architecture check, backend probe, launch/stop, private PATH |
 | [controller.h](../controller.h) | state | `Form` / `Snapshot` / `Controller`: configuration, refresh, save, launch, stop, diagnostics. One mutex and a `Notify` callback |
 | [core.h](../core.h) | state | the process-wide `Controller`, plus `makeLang()` (the bilingual string table) |
@@ -32,19 +32,18 @@ Both paths share one state and one core. The split exists so **the pure logic ca
 WinShun                          tio.exe (protocol thread)
   query ───────────────────────►  TioPlugin::query
                                     buildRows(snapshot(), Browse::None, lang)
-  ◄───────────────────────────── items[]  (launch + 6 parameters + 2 information)
-  action "openPorts" ──────────►  m_browse = Ports
+  ◄───────────────────────────── items[]  (launch rows + baud rate + open-window)
+  action "openBaudrates" ──────►  m_browse = Baudrates
   ◄───────────────────────────── {effects:[replace(items[])]}
-                                    first row is back; each row is COM n → /dev/ttyS(n-1) plus identity
-  action "port" (item.id=port:10)►  form.port = L"COM10"; controller.adopt(form)
-  ◄───────────────────────────── replace (the main list, port row now COM10)
+                                    first row is back; one common rate per row
+  action "baud" (item.id=baud:9600)►  form.serial.baudrate = 9600; controller.adopt(form, {Baudrate})
+  ◄───────────────────────────── replace (the main list, baud row now 9600)
 ```
 
-- `adopt()` writes to disk: one choice in the search box is the final answer.
-- The `cycle*` actions also `adopt()` and then `replace`, so the value on the row changes at once.
+- The main list stays lean on purpose: one launch row per port, the baud-rate shortcuts, and one "open standalone window" row that doubles as the configuration summary. There is no port row, no backend list, no control-line note and no diagnostics view in the search box — the port and every parameter live in the window, the report in the window's diagnostics card and in `details()`.
+- `adopt(form, keys)` takes only the listed keys: one choice is the final answer. The keys the host's page owns (port/baud rate/backend) go back to the page over `winshun/settings/update`; the advanced keys go into `tio.json`.
 - Every `query` resets `m_browse`: the user typed again, so a candidate list is no longer the answer.
-- `details()` returns the diagnostics text, so `Shift+Enter` can read the same block in the content pane.
-- **The diagnostics view**: Enter on the main list's diagnostics row expands into `Browse::Diagnostics` — the report is shown line by line (`buildDiagnosticsRows`, `rows.h`), the first row carries the whole report's `copy` and the `copyDiagnostics` action (Shift+Enter copies), the rest are read-only; Back sits on top and Esc returns as well.
+- `details()` returns the diagnostics text: the host's details pane can show the whole report without opening the window.
 
 ## 3. Path B: the window
 
@@ -64,9 +63,25 @@ The `openWindow` action runs on the protocol thread; the hook moves window creat
 
 ### The window and the search box do not fight
 
-- The window edits its own `m_form` and writes back to the `Controller` only on `save()` / `launch()`.
-- While `m_dirty` is set, an outside change (a port picked in the search box) does not overwrite what the user is typing.
-- `launch()` saves first and then starts: what is on screen is what starts, and what the search box will show afterwards.
+- The window edits its own `m_form` and writes back to the `Controller` only on `save()` / `launch()` — and only the keys the user edited (`FormEdits`): an untouched field never carries its stale copy back over an outside change.
+- The dirty flag is `m_edits.any()`: unsaved edits make it dirty. While dirty, an outside change does not overwrite the form; switching tabs / a new tab / a clone / closing clears the edits (they belonged to the tab that was on screen).
+- `save()` / `launch()` persist first and then act: what is on screen is what starts, and what the search box will show afterwards.
+
+### The two halves of configuration ownership
+
+`logic.h`'s `ConfigKey` splits the nine keys in two (`hostOwned()`):
+
+| Keys | Owner | Stored in | Edited from |
+|---|---|---|---|
+| `port` / `baudrate` / `backend` | the host's settings page | WinShun's INI (`tio.json` no longer holds them) | the search box, the window, the host's card |
+| `dataBits` / `parity` / `stopBits` / `flow` / `share` / `sharePort` | the plugin | `dataDir/tio.json` | the standalone window |
+
+`controller.h`'s `applySettingsLocked()` is the one decision point:
+
+- **Public keys**: a host record wins (the page is the user's latest answer), then the file's old value (an upgraded install), then the built-in default. A value pushed by the host's `settingsChanged` is adopted at once and **never sent back** (echo protection).
+- **Private keys**: the file wins; the host's value is only a migration source for keys an older manifest carried (written into the file on first load, `m_migrated` once).
+- **Write-back**: `publishLocked()` sends only **differences** of the three public keys and updates the local host state optimistically — an unchanged value is not sent, so the host never echoes it back. The write goes through `SettingsWriter` → SDK `updateSettings` → `winshun/settings/update`.
+- **Re-seeding**: a defaults change re-seeds only idle tabs that still equal the previous defaults (`sameForm`); a user's customization and any running session are left alone.
 
 ### QML uses only modules the contract guarantees
 
@@ -124,11 +139,11 @@ Two targets land in the repository root: `tio.exe` and `TioApp.dll`. The QML goe
 
 | Layer | Command | Covers | Needs |
 |---|---|---|---|
-| L0 | `tio_tests.exe` | 280 checks: parsing, validation, quoting, backend choice, plans, session machine, six gates, the row model, cycle order, the diagnostics view, the window's entries, the appearance contract | nothing (pure C++) |
-| L0' | `tio_window_tests.exe` | 45 checks: the window model's option lists, in-place editing, refusal of unsupported values, the dirty-form guard, backend availability, diagnostics | Qt Core/Gui, no window |
+| L0 | `tio_tests.exe` | 292 checks: parsing, validation, quoting, the backend preference and its resolution, plans, session machine, six gates, `FormEdits` key sets, `sameForm`, the row model, the main list's shape, the window's entries, the appearance contract | nothing (pure C++) |
+| L0' | `tio_window_tests.exe` | 125 checks: the window model's option lists, key-scoped saves, the custom baud rate, auto-preference persistence, the dirty-form guard, backend availability, diagnostics | Qt Core/Gui, no window |
 | L1 | `tio_native_probe.exe` | 30 checks: package verification, backend probe, enumeration, launch/stop on both backends, creation time, the no-console behaviour | real Windows + the packaged runtime |
-| L2 | `tests/integration.py` | 70 checks: `query` / `action` / `details` / candidate lists / the settings write / the host's settings seeding / the diagnostics view / the window's entries / language / refusals / restart | can start `tio.exe` |
-| L2+ | `tests/integration.py --launch` | 76 checks: the same plus one real session started and stopped | as above, and it holds the serial port |
+| L2 | `tests/integration.py` | 52 checks: `query` / `action` / `details` / the baud candidates / the `winshun/settings/update` handover / the host's settings seeding and migration / the main list's shape / the window's entries / language / refusals / restart | can start `tio.exe` |
+| L2+ | `tests/integration.py --launch` | 59 checks: the same plus one real session started and stopped | as above, and it holds the serial port |
 | L2' | `tio.exe --window` | 28 checks: zh/en × light/dark + the host's four styles + square corners, no QML warnings | WinShun's Qt |
 | development GUI | `pwsh tools\remote_share_gui.ps1` | visible window with a fresh temp dataDir for the sharing confirmations/port/status; `-Check` runs the hidden smoke pass | WinShun's Qt |
 | L3 | `tests/host_smoke.py` | 16 checks: the protocol through the real DLL, including `openWindow` | an installed WinShun |

@@ -39,6 +39,9 @@ class TioWindow : public QObject {
     Q_PROPERTY(QString stopBits READ stopBits NOTIFY changed)
     Q_PROPERTY(QString flow READ flow NOTIFY changed)
     Q_PROPERTY(QStringList baudrateOptions READ baudrateOptions CONSTANT)
+    // The rates the search box and the dropdown offer as shortcuts. A custom rate
+    // is typed into its own field: any positive integer the pinned tio takes.
+    Q_PROPERTY(bool baudrateCustom READ baudrateCustom NOTIFY changed)
     Q_PROPERTY(QStringList dataBitsOptions READ dataBitsOptions CONSTANT)
     Q_PROPERTY(QStringList parityOptions READ parityOptions CONSTANT)
     Q_PROPERTY(QStringList stopBitsOptions READ stopBitsOptions CONSTANT)
@@ -132,6 +135,7 @@ public:
     QString stopBits() const;
     QString flow() const;
     QStringList baudrateOptions() const;
+    bool baudrateCustom() const;
     QStringList dataBitsOptions() const;
     QStringList parityOptions() const;
     QStringList stopBitsOptions() const;
@@ -243,8 +247,7 @@ public:
     Q_INVOKABLE void setParity(const QString& parity);
     Q_INVOKABLE void setStopBits(const QString& bits);
     Q_INVOKABLE void setFlow(const QString& flow);
-    Q_INVOKABLE void setBackend(const QString& id);
-    Q_INVOKABLE void refresh();
+    Q_INVOKABLE void setBackend(const QString& id);    Q_INVOKABLE void refresh();
     // Opens a document that ships in the package folder ("THIRD_PARTY.md",
     // "manifest/files.json"): the integrity card's verifiable links.
     Q_INVOKABLE void openPackageDoc(const QString& name);
@@ -280,12 +283,19 @@ private:
     // Rebuilds the copyable text (terminal screen or hex dump) from the bytes the
     // consumer holds, so Copy and Save match what the view draws.
     void refreshShareView();
-    // Runs a form edit: adopts it, marks the form dirty, repaints.
-    void edit(const std::function<void(Form&)>& change);
+    // Runs a form edit: adopts it, records which key the user changed, marks the
+    // form dirty, repaints. The key is what a save submits, so an untouched field
+    // never carries a stale copy back over an outside change.
+    void edit(ConfigKey key, const std::function<void(Form&)>& change);
+    // Remembers the current value of one key as the user's edit.
+    void recordEdit(ConfigKey key);
     // The focused tab's form: what the cards below draw.
     Form focusedForm() const;
 
     Form m_form;          // the window's copy while editing
+    // What the user changed since the form was last clean. Dirty means "there is
+    // something to save", and a save carries exactly these keys.
+    FormEdits m_edits;
     bool m_dirty = false;
     // The window's consumer of tio's shared socket. It is created lazily and
     // stopped whenever the focused session is not sharing.

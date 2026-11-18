@@ -14,6 +14,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -323,6 +324,45 @@ inline Backend backendFromId(const std::string& id)
     return Backend::None;
 }
 
+// What the user chose, as opposed to what the machine can run: "auto" follows
+// the preference order, a named backend pins one. Keeping the two apart is what
+// stops a save of another field from turning "auto" into "wt": the resolved
+// backend is a fact about this machine today, the preference is the answer the
+// user gave.
+enum class BackendPreference { Auto, Wt, Conhost };
+
+inline const char* backendPreferenceId(BackendPreference preference)
+{
+    switch (preference) {
+    case BackendPreference::Wt: return "wt";
+    case BackendPreference::Conhost: return "conhost";
+    case BackendPreference::Auto: break;
+    }
+    return "auto";
+}
+
+inline BackendPreference backendPreferenceFromId(const std::string& id)
+{
+    if (id == "wt")
+        return BackendPreference::Wt;
+    if (id == "conhost")
+        return BackendPreference::Conhost;
+    return BackendPreference::Auto;
+}
+
+// A pinned backend the machine lacks falls back to the preference order rather
+// than promising a terminal that will not start; the preference itself stays as
+// the user set it.
+inline Backend resolvePreference(const Backends& found, BackendPreference preference)
+{
+    switch (preference) {
+    case BackendPreference::Wt: return found.wt ? Backend::Wt : preferredBackend(found);
+    case BackendPreference::Conhost: return found.conhost ? Backend::Conhost : preferredBackend(found);
+    case BackendPreference::Auto: break;
+    }
+    return preferredBackend(found);
+}
+
 // Windows Terminal splits its command line on ';' and '|' before it parses
 // quotes, so a package path holding either character cannot be passed as one
 // command. Refusing is the only honest option: rewriting the path would point
@@ -503,6 +543,10 @@ struct Session {
 struct Form {
     std::wstring port;
     Serial serial;
+    // The user's backend choice, and what it resolves to on this machine
+    // (resolvePreference). Launching uses `backend`; the settings page and the
+    // window's selector hold `preference`.
+    BackendPreference preference = BackendPreference::Auto;
     Backend backend = Backend::None;
     // When set, tio opens its bidirectional inet socket at launch. The terminal
     // and remote clients then share the same serial session. On by default: the
@@ -512,6 +556,123 @@ struct Form {
 
     Port parsed() const;
 };
+
+// The keys a change can carry. `Port`, `Baudrate` and `Backend` are also the
+// host's settings page (WinShun owns those three, so its card and the plugin
+// show one value); the rest live in tio.json alone.
+enum class ConfigKey {
+    Port,
+    Baudrate,
+    Backend,
+    DataBits,
+    Parity,
+    StopBits,
+    Flow,
+    Share,
+    SharePort,
+};
+
+inline bool hostOwned(ConfigKey key)
+{
+    return key == ConfigKey::Port || key == ConfigKey::Baudrate || key == ConfigKey::Backend;
+}
+
+inline std::vector<ConfigKey> allConfigKeys()
+{
+    return {ConfigKey::Port, ConfigKey::Baudrate, ConfigKey::Backend, ConfigKey::DataBits,
+        ConfigKey::Parity, ConfigKey::StopBits, ConfigKey::Flow, ConfigKey::Share,
+        ConfigKey::SharePort};
+}
+
+inline std::vector<ConfigKey> advancedConfigKeys()
+{
+    return {ConfigKey::DataBits, ConfigKey::Parity, ConfigKey::StopBits, ConfigKey::Flow,
+        ConfigKey::Share, ConfigKey::SharePort};
+}
+
+// What the user changed, one field at a time. A view keeps this apart from the
+// form it draws, so saving carries only the edited fields and never a stale copy
+// of a field that moved somewhere else while the draft was open.
+struct FormEdits {
+    std::optional<std::wstring> port;
+    std::optional<int> baudrate;
+    std::optional<BackendPreference> preference;
+    std::optional<int> dataBits;
+    std::optional<Parity> parity;
+    std::optional<int> stopBits;
+    std::optional<Flow> flow;
+    std::optional<bool> share;
+    std::optional<int> sharePort;
+
+    bool any() const
+    {
+        return port || baudrate || preference || dataBits || parity || stopBits || flow || share
+            || sharePort;
+    }
+
+    void clear() { *this = FormEdits{}; }
+
+    std::vector<ConfigKey> keys() const
+    {
+        std::vector<ConfigKey> out;
+        if (port)
+            out.push_back(ConfigKey::Port);
+        if (baudrate)
+            out.push_back(ConfigKey::Baudrate);
+        if (preference)
+            out.push_back(ConfigKey::Backend);
+        if (dataBits)
+            out.push_back(ConfigKey::DataBits);
+        if (parity)
+            out.push_back(ConfigKey::Parity);
+        if (stopBits)
+            out.push_back(ConfigKey::StopBits);
+        if (flow)
+            out.push_back(ConfigKey::Flow);
+        if (share)
+            out.push_back(ConfigKey::Share);
+        if (sharePort)
+            out.push_back(ConfigKey::SharePort);
+        return out;
+    }
+
+    // The edits laid over a form: the fields the user touched win, the rest stay
+    // as the form has them (which is how an outside change reaches a clean
+    // draft).
+    void applyTo(Form& form) const
+    {
+        if (port)
+            form.port = *port;
+        if (baudrate)
+            form.serial.baudrate = *baudrate;
+        if (preference)
+            form.preference = *preference;
+        if (dataBits)
+            form.serial.dataBits = *dataBits;
+        if (parity)
+            form.serial.parity = *parity;
+        if (stopBits)
+            form.serial.stopBits = *stopBits;
+        if (flow)
+            form.serial.flow = *flow;
+        if (share)
+            form.share = *share;
+        if (sharePort)
+            form.sharePort = *sharePort;
+    }
+};
+
+// Two forms carry the same configuration. The resolved backend follows the
+// machine, so the preference is what is compared: a tab that pins the same
+// backend is the same configuration even when the fallback moved.
+inline bool sameForm(const Form& a, const Form& b)
+{
+    return winshun::utf8(a.port) == winshun::utf8(b.port)
+        && a.serial.baudrate == b.serial.baudrate && a.serial.dataBits == b.serial.dataBits
+        && a.serial.parity == b.serial.parity && a.serial.stopBits == b.serial.stopBits
+        && a.serial.flow == b.serial.flow && a.preference == b.preference
+        && a.backend == b.backend && a.share == b.share && a.sharePort == b.sharePort;
+}
 
 // Rejects a transition that would run two sessions at once or resurrect a dead
 // one. Returns false and leaves the session untouched.

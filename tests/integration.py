@@ -5,8 +5,10 @@ shape the host relies on, so a broken answer is caught before installing.
 
 Path A (the search box) is what runs here: query builds the grouped rows,
 action edits in place and answers with effect::replace carrying the candidate
-list. By default nothing is launched on a port: every check stops at
-query/action/details.
+list. The three keys the host's settings page owns (port, baud rate, backend)
+are announced to the host over winshun/settings/update and stay out of
+tio.json; the advanced keys persist in the file. By default nothing is
+launched on a port: every check stops at query/action/details.
 
 `--launch` adds the one case that needs a real process: Enter on the launch row,
 the running row, and Enter again to stop. That holds the serial port for as long
@@ -45,6 +47,7 @@ class Plugin:
 
     def __init__(self, data_dir: pathlib.Path) -> None:
         self.data_dir = data_dir
+        self.updates: list[dict] = []  # notifications, newest last
         # WS_QT_DIR is what the host injects for a "qt": "host" plugin: without
         # it the window honestly says it needs the Qt build, which is its own
         # contract, not a failure.
@@ -71,12 +74,25 @@ class Plugin:
         self.process.stdin.flush()
 
     def read(self) -> dict:
-        assert self.process.stdout
-        line = self.process.stdout.readline()
-        if not line:
-            stderr = self.process.stderr.read() if self.process.stderr else ""
-            raise RuntimeError(f"the plugin closed stdout; stderr={stderr!r}")
-        return json.loads(line)
+        while True:
+            line = self.process.stdout.readline()
+            if not line:
+                stderr = self.process.stderr.read() if self.process.stderr else ""
+                raise RuntimeError(f"the plugin closed stdout; stderr={stderr!r}")
+            message = json.loads(line)
+            if "id" in message:
+                return message
+            # A notification (no id): winshun/settings/update is the plugin
+            # handing the page its three keys. It is written during the handling
+            # of a request, before that request's response.
+            self.updates.append(message)
+
+    def published(self) -> dict:
+        """The settings the plugin last handed to the host, or {}."""
+        for message in reversed(self.updates):
+            if message.get("method") == "winshun/settings/update":
+                return (message.get("params") or {}).get("settings") or {}
+        return {}
 
     def call(self, method: str, params: dict, request_id: int | None = None) -> dict:
         request: dict = {"jsonrpc": "2.0", "method": method, "params": params}
@@ -91,7 +107,7 @@ class Plugin:
             "initialize",
             {
                 "protocolVersion": "1",
-                "winshun": "0.22.0",
+                "winshun": "0.30.0",
                 "pluginDir": str(ROOT),
                 "dataDir": str(self.data_dir),
                 "locale": locale,
@@ -199,14 +215,15 @@ def main() -> int:
             # ---- path A: the grouped answer ----
             items = plugin.query()
             ids = [i.get("id") for i in items]
-            check(len(items) >= 11, "the answer carries the grouped rows", str(len(items)))
+            check(len(items) >= 4, "the answer carries the lean rows", str(len(items)))
             check(len(launch_rows(items)) >= 1, "every enumerated port has a launch row",
                   str(len(launch_rows(items))))
             check(len({i.get("id") for i in launch_rows(items)}) == len(launch_rows(items)),
                   "the launch rows have distinct ids")
-            for wanted in ("port", "baud", "dataBits", "parity", "stopBits", "flow", "backend",
-                           "control", "diagnostics"):
+            for wanted in ("baud", "config"):
                 check(wanted in ids, f"the {wanted} row is present")
+            for gone in ("port", "control", "diagnostics", "openWindow"):
+                check(gone not in ids, f"the old {gone} row is gone")
 
             launch = launch_row(items)
             check(launch.get("title", "").startswith("tio"), "the launch row names tio",
@@ -220,30 +237,20 @@ def main() -> int:
             actions = launch.get("actions") or []
             check(bool(actions), "the launch row carries an action")
             check(actions[0].get("key") == "Enter", "the launch row is on Enter")
+            check("/dev/ttyS" in (launch.get("subtitle") or ""),
+                  "the launch row shows the ttyS mapping", launch.get("subtitle") or "")
 
-            port = find(items, "port")
-            check((port.get("actions") or [{}])[0].get("id") == "openPorts",
-                  "the port row opens the port list")
-            parity = find(items, "parity")
-            check((parity.get("actions") or [{}])[0].get("id") == "cycleParity",
-                  "the parity row cycles in place")
-            check(bool(find(items, "control").get("valid")) is False,
-                  "the control-line row is read-only")
-            diag = find(items, "diagnostics")
-            check((diag.get("actions") or [{}])[0].get("id") == "diagnostics",
-                  "the diagnostics row opens the diagnostics view")
-            check(bool(diag.get("copy")), "the diagnostics row carries the report for Shift+Enter")
+            config = find(items, "config")
+            check((config.get("actions") or [{}])[0].get("id") == "openWindow",
+                  "the config row opens the window")
+            check(bool(config.get("subtitle")),
+                  "the config row shows the parameters and the backend",
+                  config.get("subtitle", ""))
 
             # ---- opening a candidate list, then going back ----
-            ports = replaced(plugin.action("openPorts", find(items, "port"), 11))
-            check(bool(ports), "openPorts answers with a replace effect")
-            check(ports and ports[0].get("id") == "back", "the port list starts with the back row")
-            listed = [i for i in ports if str(i.get("id", "")).startswith("port:")]
-            for row in listed:
-                title = row.get("title") or ""
-                check(title.startswith("COM"), "a port row titles its COMn", title)
-                check("/dev/ttyS" in (row.get("subtitle") or ""),
-                      "a port row shows the ttyS mapping", row.get("subtitle") or "")
+            bauds = replaced(plugin.action("openBaudrates", find(items, "baud"), 13))
+            check(len([i for i in bauds if str(i.get("id", "")).startswith("baud:")]) >= 5,
+                  "the baud list offers the supported rates")
 
             back = replaced(plugin.action("back", {"id": "back"}, 12))
             check(bool(launch_row(back)), "back returns the main list")
@@ -252,90 +259,40 @@ def main() -> int:
             check(len([i for i in bauds if str(i.get("id", "")).startswith("baud:")]) >= 5,
                   "the baud list offers the supported rates")
 
-            backends = replaced(plugin.action("openBackends", find(items, "backend"), 14))
-            wt = find(backends, "backend:wt")
-            con = find(backends, "backend:conhost")
-            check(bool(wt) and bool(con), "the backend list offers wt and conhost")
-            check(wt.get("subtitle") is not None, "the wt row reports its version")
-
-            # ---- choosing from a list writes the configuration ----
-            before = json.loads((data_dir / "tio.json").read_text(encoding="utf-8")) \
+            # ---- choosing from a list announces the page's keys to the host ----
+            # The baud rate belongs to the host's settings page: the choice is
+            # handed over winshun/settings/update, and tio.json keeps out of it.
+            row = find(bauds, "baud:9600")
+            check(bool(row), "the baud list has 9600")
+            plugin.updates.clear()
+            main = replaced(plugin.action("baud", row, 14))
+            check(bool(launch_row(main)), "choosing a rate returns the main list")
+            handed = plugin.published()
+            check(handed.get("baudrate") == 9600,
+                  "the rate choice is announced to the host", str(handed))
+            saved = json.loads((data_dir / "tio.json").read_text(encoding="utf-8")) \
                 if (data_dir / "tio.json").is_file() else {}
-            if wt.get("valid") is not False:
-                chosen = replaced(plugin.action("backend", wt, 15))
-                check(bool(launch_row(chosen)), "choosing a backend returns the main list")
-                saved = json.loads((data_dir / "tio.json").read_text(encoding="utf-8"))
-                check(saved.get("backend") == "wt", "the backend choice is written", str(saved.get("backend")))
-            else:
-                check(True, "wt is absent on this machine, so the backend choice is skipped")
+            check(saved.get("baudrate") is None and saved.get("port") is None
+                  and saved.get("backend") is None,
+                  "the page's keys stay out of tio.json", str(sorted(saved)))
 
-            # ---- cycling a short list ----
-            current = find(plugin.query(20), "parity").get("subtitle")
-            cycled = replaced(plugin.action("cycleParity", find(items, "parity"), 16))
-            after = find(cycled, "parity").get("subtitle")
-            check(after != current, "cycleParity changes the value", f"{current} -> {after}")
-            saved = json.loads((data_dir / "tio.json").read_text(encoding="utf-8"))
-            check(saved.get("parity") == after, "the parity cycle is written", str(saved.get("parity")))
-            # Four more cycles return to where it started.
-            for step in range(4):
-                cycled = replaced(plugin.action("cycleParity", find(cycled, "parity"), 17 + step))
-            check(find(cycled, "parity").get("subtitle") == current, "five parity cycles come back",
-                  find(cycled, "parity").get("subtitle", ""))
-
-            # ---- diagnostics: expand in the list, copy on Shift+Enter ----
-            view = replaced(plugin.action("diagnostics", find(items, "diagnostics"), 30))
-            check(bool(view), "diagnostics answers with a replace effect")
-            check(view and view[0].get("id") == "back", "the diagnostics view starts with back")
-            lines = [i for i in view if str(i.get("id", "")).startswith("diag:")]
-            check(len(lines) >= 5, "the report is one row per line", str(len(lines)))
-            check(all(i.get("valid") is False for i in lines),
-                  "every diagnostics row is read-only")
-            check("ra9fael.tio" in (lines[0].get("title") or ""),
-                  "the first row is the report header", lines[0].get("title", ""))
-            check(lines[0].get("copy") == find(items, "diagnostics").get("copy"),
-                  "the first row carries the whole report for copying")
-            check((lines[0].get("actions") or [{}])[0].get("id") == "copyDiagnostics",
-                  "the first row offers copy on Shift+Enter")
-            check(all(not i.get("copy") for i in lines[1:]),
-                  "no other row carries a copy")
-            check("connected" not in json.dumps(view).lower(),
-                  "the diagnostics view never claims a connection")
-
-            # Shift+Enter on the view copies the report and keeps the view.
-            copied = plugin.action("copyDiagnostics", lines[0], 32)
-            check("copy" in effect_types(copied), "copyDiagnostics copies the report",
-                  str(effect_types(copied)))
-            report = next((e.get("text") for e in copied if e.get("type") == "copy"), "")
-            check("integrity" in report, "the copied report has integrity")
-            check("remote socket clients can write" in report,
-                  "the copied report warns about remote serial writes")
-
-            # Back returns to the main list.
-            back = replaced(plugin.action("back", {"id": "back"}, 33))
-            check(bool(launch_row(back)), "back returns the main list")
-
-            details = plugin.call("details", {"item": find(items, "control"), "text": ""}, 34)
+            # The report itself lives in the window's diagnostics card and in the
+            # host's details pane; the list carries no diagnostics rows.
+            details = plugin.call("details", {"item": find(items, "config"), "text": ""}, 34)
             text = (details.get("result") or {}).get("text") or ""
             check("backend" in text, "details reports the backend")
             check("session" in text, "details reports the session")
             check("connected" not in text.lower(), "details never claims a connection")
 
             # ---- language ----
-            zh_groups = [i["id"] for i in items if str(i.get("id", "")).startswith("group:")]
             plugin.send({"jsonrpc": "2.0", "method": "settingsChanged", "params": {"settings": {}}})
             plugin.send({"jsonrpc": "2.0", "method": "appearance",
                          "params": {"locale": "en", "theme": "dark", "corners": "square"}})
             english = plugin.query(40)
             check(launch_row(english).get("title", "").startswith("tio"),
                   "the launch row survives a language change")
-            check(find(english, "port").get("title") == "Port", "the port row is localized",
-                  find(english, "port").get("title", ""))
-            check(find(english, "control").get("valid") is False, "the control row stays read-only")
-            # A group row's id must not change with the language: the host keeps
-            # the keyboard on the row with the same id when the list is re-answered.
-            en_groups = [i["id"] for i in english if str(i.get("id", "")).startswith("group:")]
-            check(zh_groups == en_groups, "the group row ids are language-independent",
-                  f"{zh_groups} vs {en_groups}")
+            check(find(english, "baud").get("title") == "Baud rate", "the baud row is localized",
+                  find(english, "baud").get("title", ""))
 
             # ---- the real thing: launch, the running row, stop ----
             if args.launch:
@@ -359,11 +316,14 @@ def main() -> int:
                           "the running row does not claim a connection")
 
                     saved = json.loads((data_dir / "tio.json").read_text(encoding="utf-8"))
-                    check(saved.get("port", "").startswith("COM"),
-                          "the launched configuration is on disk", str(saved.get("port")))
+                    check(saved.get("port") is None and saved.get("baudrate") is None,
+                          "the page's keys are not written into tio.json", str(sorted(saved)))
                     check(saved.get("packageVersion") == "3.9-3",
                           "the configuration records the package version",
                           str(saved.get("packageVersion")))
+                    handed = plugin.published()
+                    check(str(handed.get("port", "")).startswith("COM"),
+                          "the launched port is announced to the host", str(handed))
 
                     time.sleep(1)
                     stopped = plugin.action("stopPort", running, 72)
@@ -373,8 +333,8 @@ def main() -> int:
                           str(after.get("actions")))
 
             # ---- the standalone window's entries ----
-            # Its own row (visible), and Ctrl+Enter on the launch row (the menu).
-            entry = find(items, "openWindow")
+            # The config row (Enter), and Ctrl+Enter on the launch row (the menu).
+            entry = find(items, "config")
             check(bool(entry), "the window entry row is in the list")
             check((entry.get("actions") or [{}])[0].get("id") == "openWindow",
                   "the entry row opens the window")
@@ -389,7 +349,7 @@ def main() -> int:
             notices = [e.get("text", "") for e in opened if e.get("type") == "notify"]
             check(not notices, "opening the window reports no error", "; ".join(notices))
             again = plugin.query(36)
-            check(len(again) >= 11, "the protocol still answers with the window open")
+            check(len(again) >= 4, "the protocol still answers with the window open")
 
             # ---- refusals ----
             other = plugin.call(
@@ -410,45 +370,79 @@ def main() -> int:
         check(plugin.process.poll() is not None, "the plugin exits on shutdown")
 
         # The settings file is the only thing that persists: a second run must
-        # start from it without a window or a session.
+        # start from it without a window or a session. The page's record comes
+        # with it: the host passes what it stored, and the rows follow.
         plugin = Plugin(data_dir)
         try:
-            init = plugin.initialize()
+            init = plugin.initialize(settings={"baudrate": 9600})
             check("result" in init, "the plugin starts with an existing data folder")
             restored = launch_row(plugin.query(60))
             check(str(restored.get("id", "")).startswith("port:"),
                   "the second run answers the same rows", str(restored.get("id")))
+            summary = find(plugin.query(60), "config")
+            check("9600" in (summary.get("subtitle") or ""),
+                  "the host's record survives a restart", summary.get("subtitle", ""))
         finally:
             plugin.close()
 
-        # The host's settings page seeds a value only where tio.json has none, and
-        # a value already recorded there wins: the user's own edit is newer.
+        # The host's settings page owns its three keys: a fresh install is
+        # seeded from the page (numbers and the text a settings form sends),
+        # and a change from the page wins over any value already in force.
+        # Keys the manifest dropped (dataBits, parity) are the plugin's own:
+        # the page is only a migration source for them, and tio.json keeps
+        # them — the page never sets them back.
         fresh = data_dir / "settings-seed"
         fresh.mkdir()
         plugin = Plugin(fresh)
         try:
-            # A settings page sends a text field as a string ("8", not 8), which is
-            # the case the seeding must handle too.
             plugin.initialize(settings={"baudrate": 9600, "dataBits": "7", "parity": "even",
                                         "backend": "conhost"})
             seeded = launch_row(plugin.query(61))
-            check("9600" in (seeded.get("subtitle") or ""),
-                  "the host's settings seed a fresh configuration", seeded.get("subtitle", ""))
-            check("7e1" in (seeded.get("subtitle") or ""),
-                  "a numeric setting sent as text is read", seeded.get("subtitle", ""))
-            check("conhost" in str(find(plugin.query(62), "backend")),
-                  "the host's backend choice is used",
-                  find(plugin.query(63), "backend").get("subtitle", ""))
-            # An edit through the box is written, and then wins over the settings.
-            plugin.action("cycleParity", find(plugin.query(64), "parity"), 65)
+            check(str(seeded.get("id", "")).startswith("port:"),
+                  "the seeded configuration answers the launch rows", str(seeded.get("id")))
+            summary = find(plugin.query(61), "config")
+            check("9600" in (summary.get("subtitle") or ""),
+                  "the host's settings seed a fresh configuration", summary.get("subtitle", ""))
+            check("7e1" in (summary.get("subtitle") or ""),
+                  "a numeric setting sent as text is read", summary.get("subtitle", ""))
+            check("conhost" in str(summary.get("subtitle") or ""),
+                  "the host's backend choice is used", summary.get("subtitle", ""))
+            saved = json.loads((fresh / "tio.json").read_text(encoding="utf-8")) \
+                if (fresh / "tio.json").is_file() else {}
+            check(saved.get("parity") == "even",
+                  "a page value the manifest dropped migrates into tio.json",
+                  str(saved.get("parity")))
+            check(saved.get("baudrate") is None,
+                  "the page's baud rate is not copied back into tio.json",
+                  str(saved.get("baudrate")))
+
+            # The page changes its baud rate: its record is the user's latest
+            # answer, so it applies even over the value already in force. A key
+            # the page no longer owns is left alone.
             plugin.send({"jsonrpc": "2.0", "method": "settingsChanged",
                          "params": {"settings": {"baudrate": 300, "parity": "odd"}}})
             plugin.send({"jsonrpc": "2.0", "method": "appearance",
                          "params": {"locale": "zh", "theme": "light"}})
             after = launch_row(plugin.query(66))
-            check("300" not in (after.get("subtitle") or ""),
-                  "a settings change does not reset the saved baud rate",
-                  after.get("subtitle", ""))
+            check(str(after.get("id", "")).startswith("port:"),
+                  "the rows answer after a settings change", str(after.get("id")))
+            summary = find(plugin.query(66), "config")
+            check("300" in (summary.get("subtitle") or ""),
+                  "a settings change applies over the value in force",
+                  summary.get("subtitle", ""))
+            check("odd" not in (summary.get("subtitle") or ""),
+                  "the page does not set keys it no longer owns", summary.get("subtitle", ""))
+        finally:
+            plugin.close()
+
+        # The page's record survives a restart: the new process is told the
+        # same value and starts from it.
+        plugin = Plugin(fresh)
+        try:
+            plugin.initialize(settings={"baudrate": 300, "backend": "conhost"})
+            again = find(plugin.query(67), "config")
+            check("300" in (again.get("subtitle") or ""),
+                  "the page's changed value survives a restart", again.get("subtitle", ""))
         finally:
             plugin.close()
 

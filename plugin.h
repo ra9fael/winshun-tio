@@ -32,15 +32,34 @@ protected:
         core().setTheme(theme());
         core().setAppearance(appearance());
         core().controller().setHostSettings(settings());
+        // A change made in the search box or the window goes back to WinShun's
+        // settings page, so its card and this plugin show one value. The page
+        // persists it and answers with settingsChanged, which is applied here
+        // without another write.
+        core().controller().attachSettingsWriter([this](winshun::Json values) {
+            updateSettings(std::move(values));
+        });
         core().configure(winshun::wide(pluginDir()), dataDir());
     }
 
     void settingsChanged(const winshun::Json& settings) override
     {
-        // The host's settings page changed: adopt them only for what tio.json has
-        // never recorded, then refresh so the rows show the result.
+        // The page changed: its three keys are the user's latest answer, so they
+        // are adopted and the rows follow. Nothing is sent back from here.
         core().controller().setHostSettings(settings);
         core().controller().refresh();
+    }
+
+    // The page's "设置" button (manifest `settingsWindow`). The window is the
+    // detailed configuration; opening it never touches a serial port.
+    void showSettings() override
+    {
+        if (!windowAvailable()) {
+            notifyUser(chinese() ? "设置窗口需要 Qt 版插件" : "The settings window needs the Qt build");
+            return;
+        }
+        if (!openWindowHook()())
+            notifyUser(chinese() ? "窗口打不开" : "The window could not be opened");
     }
 
     void appearanceChanged() override
@@ -80,14 +99,6 @@ protected:
 
         Controller& controller = core().controller();
         const std::string id = request.action;
-
-        // ---- the diagnostics view's copy action ----
-        // Shift+Enter on a diagnostics row (declared in the manifest): the whole
-        // report copies, without leaving the view or the list.
-        if (id == "copyDiagnostics") {
-            return {winshun::effect::copy(controller.diagnostics()),
-                notify(L"诊断已复制", "Diagnostics copied")};
-        }
 
         // ---- launch and stop ----
         if (id == "launch") {
@@ -156,10 +167,8 @@ protected:
         }
 
         // ---- opening a candidate list ----
-        if (id == "openPorts" || id == "openBaudrates" || id == "openBackends") {
-            m_browse = id == "openPorts"       ? Browse::Ports
-                : id == "openBaudrates"        ? Browse::Baudrates
-                                               : Browse::Backends;
+        if (id == "openBaudrates") {
+            m_browse = Browse::Baudrates;
             return {replace(rows())};
         }
         if (id == "back") {
@@ -168,51 +177,19 @@ protected:
         }
 
         // ---- choosing from a candidate list ----
-        if (id == "port" || id == "baud" || id == "backend") {
+        if (id == "baud") {
             const std::string target = request.item["id"].toString();
             const std::size_t colon = target.find(':');
             const std::string value = colon == std::string::npos ? std::string() : target.substr(colon + 1);
             Form form = controller.form();
 
-            if (id == "port") {
-                form.port = L"COM" + winshun::wide(value);
-            } else if (id == "baud") {
-                form.serial.baudrate = std::atoi(value.c_str());
-                if (form.serial.baudrate <= 0)
-                    return {notify(L"波特率无效", "Invalid baud rate")};
-            } else {
-                form.backend = backendFromId(value);
-            }
-            // Choosing is the whole edit: there is no Save in the search box, so
-            // the configuration is written here.
-            controller.adopt(form);
+            form.serial.baudrate = std::atoi(value.c_str());
+            if (form.serial.baudrate <= 0)
+                return {notify(L"波特率无效", "Invalid baud rate")};
+            // Choosing is the whole edit: there is no Save in the search box,
+            // so the key the user changed is written here, and only that key.
+            controller.adopt(form, {ConfigKey::Baudrate});
             m_browse = Browse::None;
-            return {replace(rows())};
-        }
-
-        // ---- cycling a short list in place ----
-        if (id == "cycleDataBits" || id == "cycleParity" || id == "cycleStopBits"
-            || id == "cycleFlow") {
-            Form form = controller.form();
-            if (id == "cycleDataBits")
-                cycleDataBits(form.serial);
-            else if (id == "cycleParity")
-                cycleParity(form.serial);
-            else if (id == "cycleStopBits")
-                cycleStopBits(form.serial);
-            else
-                cycleFlow(form.serial);
-            controller.adopt(form);
-            m_browse = Browse::None;
-            return {replace(rows())};
-        }
-
-        // ---- diagnostics ----
-        if (id == "diagnostics") {
-            // Expand in the list rather than copy: the report is there to read.
-            // Shift+Enter on the row copies the whole block (the row's `copy`),
-            // which is the path for pasting it somewhere.
-            m_browse = Browse::Diagnostics;
             return {replace(rows())};
         }
 
@@ -223,8 +200,8 @@ protected:
     {
         (void)item;
         (void)text;
-        // The content pane shows the block the diagnostics action copies, so a
-        // report can be read without copying it first.
+        // The host's details pane: the same report the window's diagnostics card
+        // shows, so it can be read without opening the window.
         return winshun::Json::Object{{"text", core().controller().diagnostics()}};
     }
 

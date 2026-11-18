@@ -122,6 +122,13 @@ static void testDefaults()
     // conhost is the one we create ourselves, so it is the owned one.
     CHECK(con.value("owned").toBool(), "conhost is the owned backend");
     CHECK(!wt.value("owned").toBool(), "wt is not owned");
+
+    // auto is listed with them: the choice in force by default, and it names
+    // which terminal it resolves to on this machine.
+    const QVariantMap autoRow = backendOf(model, "auto");
+    CHECK(!autoRow.isEmpty(), "auto is listed");
+    CHECK(autoRow.value("current").toBool(), "auto is the choice in force");
+    CHECK(!autoRow.value("detail").toString().isEmpty(), "auto names what it resolves to");
 }
 
 static void testEditing()
@@ -133,6 +140,7 @@ static void testEditing()
 
     model.setBaudrate("9600");
     CHECK(model.baudrate() == "9600", "the baud rate changed", model.baudrate().toStdString());
+    CHECK(!model.baudrateCustom(), "a usual rate is not custom");
     CHECK(model.dirty(), "an edit makes the form dirty");
 
     model.setDataBits("7");
@@ -144,10 +152,23 @@ static void testEditing()
     model.setFlow("hard");
     CHECK(model.flow() == "hard", "the flow changed");
 
-    // A value the pinned build does not take is refused, and the form keeps
-    // what it had.
+    // Any positive integer is a rate the pinned tio takes: the list is the
+    // shortcuts, not a limit, and the field says a custom value is on.
     model.setBaudrate("12345");
-    CHECK(model.baudrate() == "9600", "an unsupported baud rate is refused",
+    CHECK(model.baudrate() == "12345", "a custom rate is accepted",
+        model.baudrate().toStdString());
+    CHECK(model.baudrateCustom(), "a custom rate is marked as custom");
+    CHECK(!model.baudrateOptions().contains("12345"), "the shortcuts stay closed");
+
+    // What is refused is what is not a rate at all, and the form keeps what it
+    // had.
+    model.setBaudrate("0");
+    CHECK(model.baudrate() == "12345", "zero is refused", model.baudrate().toStdString());
+    model.setBaudrate("-9600");
+    CHECK(model.baudrate() == "12345", "a negative rate is refused",
+        model.baudrate().toStdString());
+    model.setBaudrate("abc");
+    CHECK(model.baudrate() == "12345", "not a number is refused",
         model.baudrate().toStdString());
     model.setDataBits("9");
     CHECK(model.dataBits() == "7", "an unsupported data-bit count is refused",
@@ -434,6 +455,16 @@ static void testBackendChoice()
         CHECK(model.backendText().contains("conhost"), "conhost was selected",
             model.backendText().toStdString());
     }
+
+    // auto is a choice of its own, not a pin: selecting it and saving keeps
+    // "auto" instead of freezing whatever it resolved to today.
+    model.setBackend("auto");
+    CHECK(model.backendText().contains(QString::fromUtf8("自动")), "auto was selected",
+        model.backendText().toStdString());
+    CHECK(model.save(), "the preference is saved");
+    reload(model);
+    CHECK(model.backendText().contains(QString::fromUtf8("自动")),
+        "auto survives a reload as a preference", model.backendText().toStdString());
 }
 
 static void testLaunchGate()

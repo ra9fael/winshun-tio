@@ -8,8 +8,8 @@
 
 | 文件 | 层 | 内容 |
 |---|---|---|
-| [logic.h](../logic.h) | 纯核心 | COMn 解析与 n−1 映射、参数校验、argv 引用、后端选择、启动计划、会话状态机、六道门。**零 Windows 依赖** |
-| [rows.h](../rows.h) | 纯核心 | 行模型：`Row`、`Lang`、候选行构造、循环动作。只依赖 `logic.h` |
+| [logic.h](../logic.h) | 纯核心 | COMn 解析与 n−1 映射、参数校验、argv 引用、后端偏好与解析、启动计划、会话状态机、`ConfigKey`/`FormEdits`、六道门。**零 Windows 依赖** |
+| [rows.h](../rows.h) | 纯核心 | 行模型：`Row`、`Lang`、候选行构造、后端选择标签。只依赖 `logic.h` |
 | [native.h](../native.h) | Win32 | 只读枚举（SetupDi + SERIALCOMM）、SHA-256 + PE 架构校验、后端探测、启动/停止、私有 PATH |
 | [controller.h](../controller.h) | 状态 | `Form` / `Snapshot` / `Controller`：配置、刷新、保存、启动、停止、诊断。单 mutex + `Notify` 回调 |
 | [core.h](../core.h) | 状态 | `Controller` 的进程级实例，以及 `makeLang()`（双语字符串表） |
@@ -32,19 +32,18 @@
 WinShun                          tio.exe (protocol thread)
   query ───────────────────────►  TioPlugin::query
                                     buildRows(snapshot(), Browse::None, lang)
-  ◄───────────────────────────── items[]  （启动行 + 6 参数行 + 2 信息行）
-  action "openPorts" ──────────►  m_browse = Ports
+  ◄───────────────────────────── items[]  （启动行 + 波特率行 + 开窗行）
+  action "openBaudrates" ──────►  m_browse = Baudrates
   ◄───────────────────────────── {effects:[replace(items[])]}
-                                    列表首行是 back，每行 COM n → /dev/ttyS(n-1) + 身份
-  action "port"（item.id=port:10）►  form.port = L"COM10"; controller.adopt(form)
-  ◄───────────────────────────── replace（主列表，端口行已是 COM10）
+                                    列表首行是 back，每行一个常用波特率
+  action "baud"（item.id=baud:9600）►  form.serial.baudrate = 9600; controller.adopt(form, {Baudrate})
+  ◄───────────────────────────── replace（主列表，波特率行已是 9600）
 ```
 
-- `adopt()` 会写盘：搜索框里的一次选择就是最终结果。
-- `cycle*` 动作同样 `adopt()` 后 `replace`，所以行上的值立刻更新。
+- 主列表刻意精简：每个串口一条启动行、波特率快捷项、一行「打开独立窗口」（同时是配置摘要）。端口行、后端列表、控制线说明与诊断视图都不在搜索框里——端口与完整参数在窗口里，诊断报告在窗口的「诊断」卡和 `details()` 里。
+- `adopt(form, keys)` 只收列出的键：一次选择就是最终结果；其中宿主持有的键（端口/波特率/后端）经 `winshun/settings/update` 写回设置页，高级键写进 `tio.json`。
 - `query` 一律把 `m_browse` 复位：用户又打字了，候选列表不再是答案。
-- `details()` 返回诊断文本，`Shift+Enter` 也能在内容面板读到同一段。
-- **诊断视图**：主列表的诊断行 Enter 展开成 `Browse::Diagnostics`——报告逐行显示（`buildDiagnosticsRows`，`rows.h`），首行带整份报告的 `copy` 与 `copyDiagnostics` 动作（Shift+Enter 复制），其余行只读；返回行在最上面，Esc 也能退回。
+- `details()` 返回诊断文本：宿主的详情面板可以读整份报告，不用开窗。
 
 ## 3. 路径 B：窗口
 
@@ -64,9 +63,25 @@ winshunTioMain(appDir)                    GUI thread
 
 ### 窗口与搜索框不会打架
 
-- 窗口编辑的是自己的 `m_form`，只有 `save()` / `launch()` 才写回 `Controller`。
-- `m_dirty` 为真时，外部变化（搜索框里改了参数）不会覆盖用户正在编辑的内容。
-- `launch()` 先写盘再启动：屏幕上看到的就是要启动的，也是搜回去会看到的。
+- 窗口编辑的是自己的 `m_form`，只有 `save()` / `launch()` 才写回 `Controller`，而且只提交用户改过的键（`FormEdits`）：没动过的字段不回写，外面的更新不会被旧副本盖掉。
+- 脏标记来自 `m_edits.any()`：有未保存的编辑就脏。脏时外部变化不覆盖表单；切页签/新建/克隆/关闭会清编辑（编辑属于当时那个页签）。
+- `save()` / `launch()` 先写配置再动作：屏幕上看到的就是要用的，也是搜回去会看到的。
+
+### 配置键的两半归属
+
+`logic.h` 的 `ConfigKey` 把九个键分成两半（`hostOwned()`）：
+
+| 键 | 归属 | 存储 | 谁改 |
+|---|---|---|---|
+| `port` / `baudrate` / `backend` | 宿主设置页 | Win顺 的 INI（`tio.json` 不再保存） | 搜索框、窗口、宿主卡片 |
+| `dataBits` / `parity` / `stopBits` / `flow` / `share` / `sharePort` | 插件 | `dataDir/tio.json` | 独立窗口 |
+
+`controller.h` 的 `applySettingsLocked()` 是唯一判定点：
+
+- **公共键**：宿主有记录就用宿主的（页面上的最新答案），没有才读文件旧值（升级安装），最后是内置默认。宿主 `settingsChanged` 推来的值立即采纳，且**不回发**（防回环）。
+- **私有键**：文件优先，宿主值只作为旧清单遗留键的迁移来源（首次加载写入文件，`m_migrated` 一次完成）。
+- **回写**：`publishLocked()` 只对三个公共键发**差异**，并对本地宿主状态做乐观更新——值没变不发，宿主也就不会回推一遍。回写走 `SettingsWriter` → SDK `updateSettings` → `winshun/settings/update`。
+- **重播**：默认值变化只重播仍等于旧默认的空闲页签（`sameForm`），用户的定制和运行中的会话一律不动。
 
 ### QML 只用契约内的模块
 
@@ -124,11 +139,11 @@ cmake --build build\msvc
 
 | 层 | 命令 | 覆盖 |
 |---|---|---|
-| L0 | `tio_tests.exe` | 280 项：解析、校验、引用、后端选择、计划、会话机、六道门、行模型、循环顺序、诊断视图、窗口入口、外观契约 |
-| L0' | `tio_window_tests.exe` | 45 项：窗口模型的取值表、就地编辑、拒绝非法值、脏表单保护、后端可选性、诊断 |
+| L0 | `tio_tests.exe` | 292 项：解析、校验、引用、后端偏好与解析、计划、会话机、六道门、`FormEdits` 键集、`sameForm`、行模型、主列表形状、窗口入口、外观契约 |
+| L0' | `tio_window_tests.exe` | 125 项：窗口模型的取值表、按键提交的保存、自定义波特率、auto 偏好持久化、脏表单保护、后端可选性、诊断 |
 | L1 | `tio_native_probe.exe` | 30 项：包校验、后端探测、枚举、两后端起停、创建时间、无控制台行为 |
-| L2 | `integration.py` | 70 项：协议往返、候选列表、落盘、宿主设置种子、诊断视图、窗口入口、语言、拒绝、重启 |
-| L2+ | `integration.py --launch` | 76 项：另外真起一个会话并停止 |
+| L2 | `integration.py` | 52 项：协议往返、波特率候选列表、`winshun/settings/update` 移交、宿主设置种子与迁移、主列表形状、窗口入口、语言、拒绝、重启 |
+| L2+ | `integration.py --launch` | 59 项：另外真起一个会话并停止 |
 | L2' | `window_check.py` | 28 项：中英 × 深浅 4 组 + 宿主四种风格 + 直角，无 QML 警告 |
 | 开发期 GUI | `pwsh tools\remote_share_gui.ps1` | 可见窗口 + 临时 dataDir，手工检查共享确认/端口/状态；`-Check` 为无窗口自检 |
 | L3 | `host_smoke.py` | 16 项：按宿主方式跑真实 DLL，含 `openWindow` |

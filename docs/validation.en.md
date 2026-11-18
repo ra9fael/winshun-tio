@@ -4,17 +4,27 @@
 
 What was run on which machine, what it showed, and what has not run. **Only what this file calls "measured" has been verified.**
 
-Environment: Windows 11 x64 ｜ MSVC 19.51 (VS 18 Community) ｜ CMake 3.29.2 ｜ Ninja 1.12 ｜ Qt 6.12.0 (`D:\tools\Qt\6.12.0\msvc2022_64`) ｜ WinShun 0.22.0 (`C:\Program Files\WinShun`) ｜ this machine's serial port: `Silicon Labs CP210x (COM8)`
+Environment: Windows 11 x64 ｜ MSVC 19.51 (VS 18 Community) ｜ CMake 3.29.2 ｜ Ninja 1.12 ｜ Qt 6.12.0 (`D:\tools\Qt\6.12.0\msvc2022_64`) ｜ WinShun 0.30.0 (`C:\Program Files\WinShun`) ｜ this machine's serial port: `Silicon Labs CP210x (COM8)`
 
 ## 1. The checks that ran
 
+The 0.2.0 round (the configuration-ownership rework) is measured below; the 0.1.4 round's hardware and post-packaging records are kept in section 2.
+
 | Layer | Command | Result | Notes |
 |---|---|---|---|
-| L0 | `build\msvc\tests\tio_tests.exe` | **280 / 280 pass** | pure C++; the diagnostics view's row split, the window entry rows, and the appearance contract's parsing (style/size allow-list, square corners, the no-nativeLook fallback) included |
-| L0' | `build\msvc\tests\tio_window_tests.exe` | **46 / 46 pass** | the window model: option lists, in-place editing, refusal of unsupported values, the dirty form surviving an outside change, backend availability, diagnostics, fold persistence |
+| L0 | `build\msvc\tests\tio_tests.exe` | **292 / 292 pass** | pure C++; the main list's shape (launch rows + baud + open-window, no port/control/diagnostics rows), the backend preference resolution, `FormEdits` key sets, `sameForm`, the appearance contract |
+| L0' | `build\msvc\tests\tio_window_tests.exe` | **125 / 125 pass** | the window model: the custom baud rate accepted/refused, the auto preference surviving a save, key-scoped saves, the dirty form surviving an outside change, backend availability, diagnostics |
+| ctest suite | `ctest --test-dir build\msvc -C Release` | **5 / 5 pass** | tio_logic, tio_window_model, tio_share_client, tio_ansi_text, tio_share_port_preflight |
+| L2 | `python tests\integration.py` | **52 / 52 pass** | protocol round trips, the `winshun/settings/update` handover, a host value overriding a local one, migration filling only what the page lacks, the main list's shape, the window's entry rows |
+| Packaging | `python tools\package.py --dev` | pass | the digest is in the `.sha256` beside it under `dist\development\`; the runtime verification is part of the packaging flow |
+| Install | `ws plugin install` | pass | 0.1.4 → 0.2.0, enabled |
+
+The 0.1.4 round (hardware and post-packaging items not re-run this round):
+
+| Layer | Command | Result | Notes |
+|---|---|---|---|
 | L1 | `build\msvc\tests\tio_native_probe.exe` | **30 / 30 pass** | starts real processes; both backends measured |
-| L2 | `python tests\integration.py` | **70 / 70 pass** | protocol round trips, `replace`, the settings write, the host's settings seeding, the diagnostics view's expand/copy, and the window's entry rows |
-| L2+ | `python tests\integration.py --launch` | **76 / 76 pass** | adds one real session: the launch row, the running label, the settings write, Enter to stop; COM8 opens again right after, no orphan process |
+| L2+ | `python tests\integration.py --launch` | **76 / 76 pass** | adds one real session: the launch row, the running label, Enter to stop; COM8 opens again right after, no orphan process |
 | L2' | `python tests\window_check.py` | **28 / 28 pass** | zh/en × light/dark (4) + the host's four styles (fluent/brand/tactile/liquid, each with a full nativeLook) + square corners, no QML warnings |
 | L3 | `python tests\host_smoke.py` | **16 / 16 pass** | started the way the host starts it (`WS_QT_DIR` + JSON-RPC), through the real DLL |
 
@@ -34,12 +44,15 @@ Environment: Windows 11 x64 ｜ MSVC 19.51 (VS 18 Community) ｜ CMake 3.29.2 �
 | Group row ids changed with the language | the caption is localized but the id was derived from it, so after a language switch the host could not find the row it was on → ids are fixed (`group:launch` / `parameters` / `information`); L0 and L2 each assert it |
 | The launched configuration was not written | `launch()` adopted the form without saving it, so "A is running while the next query shows B" → it saves before starting, and L2+ checks `port` / `packageVersion` in `tio.json` |
 | A running row looked idle | after a launch the row was indistinguishable from the idle one → running / starting / stopping is now in the subtitle |
-| Host settings were ignored | `settingsChanged` used to discard its payload → it now seeds: only keys `tio.json` has never recorded are taken, the user's own edit wins (covered by L2, including a numeric field sent as text) |
+| Host settings were ignored | `settingsChanged` used to discard its payload (0.1.x: seeded only keys `tio.json` had never recorded) → **since 0.2.0 the page owns port/baudrate/backend**: its record is the user's latest answer, a pushed value is adopted at once and never sent back; the file's old values are handed over once, and the page is the authority afterwards (covered by L2, including a numeric field sent as text and a page change overriding the value in force) |
+| A save pinned `auto` to `wt` | the form stored only the resolved backend, so saving any other field turned `auto` into `wt` → the preference (`BackendPreference`) and the resolution are stored and published apart; auto stays auto across saves and restarts (covered by L0') |
+| The page's three keys landed in `tio.json` | the public keys used to be written to both the file and the settings page, so the two could diverge → `writeSettingsLocked` now removes them from the file, which keeps only the advanced keys and the UI state (L2 asserts the file lacks all three) |
 | A theme or language switch did not repaint the window | `DesignTokens.dark` was a read-only signed property and `appearanceChanged` did not notify the view → it now reads the model's `dark` and calls `Controller::touch()`, without re-probing the port |
 | Window rendering | `--window` under the software renderer, captured: the five groups, the controls, both languages and both themes all correct (the capture is in the session record, not in the repo) |
 | The icon | the glyph design follows the [winshun-plugin-icons](../../winshun-plugin-icons) pipeline: the Phosphor `wave-square` (U+EA9E) rasterised per size; `app.ico`'s 8 frames and `icons/app-*.png` share pixels; the title bar and taskbar read the `:/plugin-icons` resources through `setPluginWindowIcon()` (the L2' no-QML-warning runs cover that path); font loading moved from `prepareGui` to `startGui` (after the `QGuiApplication`), fixing a crash that made the font code dead on arrival |
 | No-Qt fallback | with `WS_QT_DIR`/`WS_APP_DIR` cleared, `tio.exe` still serves the protocol; `openWindow` answers "the window needs the Qt build" and nothing crashes |
-| Contract versions | `plugin.json` declares `"qt": "host"`, `"qtVersion": "6.12.0"`; the host's `Qt6Core.dll` measured 6.12.0.0 |
+| 各契约版本 | `plugin.json` 声明 `"qt": "host"`, `"qtVersion": "6.12.0"`；宿主 `Qt6Core.dll` 实测 6.12.0.0 |
+| `winshun/settings/update` | after a baud-rate choice in the search box the plugin emits `winshun/settings/update` (`baudrate` as a number); the host records it and answers `settingsChanged`; the plugin does not re-send the same value (no echo loop) |
 
 ## 3. Not run (delivery gates)
 

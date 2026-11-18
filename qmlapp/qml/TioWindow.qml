@@ -496,6 +496,16 @@ Window {
                             "\"Started\" is not \"port open\": the port state only changes when the upstream gives a verifiable signal. With remote sharing, WT and remote clients share one serial session.")
                     }
 
+                    Label {
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                        color: DesignTokens.mutedColor
+                        font.pixelSize: DesignTokens.fontSmall
+                        text: window.tr(
+                            "“保存配置”写的是后续会话的默认值：正在运行的会话保持它启动时的参数，要换参数得重启；搜索框里的端口与波特率是同一份默认值。",
+                            "\"Save\" writes the defaults for later sessions: a running session keeps the parameters it started with, and changing them means a restart. The port and baud rate in the search box are the same defaults.")
+                    }
+
                     Rectangle {
                         Layout.fillWidth: true
                         Layout.topMargin: 8
@@ -1194,14 +1204,59 @@ Window {
 
                     FieldRow {
                         label: window.tr("波特率", "Baud rate")
+                        hint: window.tr("常用值在左，右侧可填任意正整数",
+                                        "common rates on the left, any positive integer on the right")
                         TokenComboBox {
+                            id: baudBox
                             Layout.fillWidth: true
                             Layout.preferredHeight: DesignTokens.rowHeight
                             enabled: !(typeof tio !== "undefined" && tio.sessionActive)
                             model: typeof tio !== "undefined" ? tio.baudrateOptions : []
+                            // A custom rate is not in the list: the box shows the
+                            // field's value instead of pretending a shortcut is on.
                             currentIndex: typeof tio !== "undefined"
-                                          ? Math.max(0, model.indexOf(tio.baudrate)) : 0
-                            onActivated: function (index) { tio.setBaudrate(model[index]) }
+                                          ? model.indexOf(tio.baudrate) : -1
+                            displayText: typeof tio !== "undefined" ? tio.baudrate : ""
+                            onActivated: function (index) {
+                                if (typeof tio !== "undefined")
+                                    tio.setBaudrate(model[index])
+                            }
+                        }
+                        TextField {
+                            id: baudField
+                            Layout.preferredWidth: 96
+                            Layout.preferredHeight: DesignTokens.rowHeight
+                            enabled: !(typeof tio !== "undefined" && tio.sessionActive)
+                            horizontalAlignment: TextInput.AlignRight
+                            inputMethodHints: Qt.ImhDigitsOnly
+                            text: typeof tio !== "undefined" ? tio.baudrate : ""
+                            color: DesignTokens.textColor
+                            font.pixelSize: DesignTokens.fontCaption
+                            background: Rectangle {
+                                radius: DesignTokens.controlRadius
+                                color: DesignTokens.controlColor
+                                border.width: 1
+                                border.color: baudField.activeFocus
+                                              ? DesignTokens.accentColor : DesignTokens.controlBorderColor
+                            }
+                            // Commit on Enter and on focus loss: what leaves the
+                            // box is what the launch would use.
+                            onEditingFinished: {
+                                if (typeof tio !== "undefined" && text !== tio.baudrate)
+                                    tio.setBaudrate(text)
+                            }
+                            // A refused value (not a positive integer) is written
+                            // back so the box never shows something that is not
+                            // the configuration.
+                            Connections {
+                                target: typeof tio !== "undefined" ? tio : null
+                                function onChanged() {
+                                    if (typeof tio !== "undefined"
+                                            && !baudField.activeFocus
+                                            && baudField.text !== tio.baudrate)
+                                        baudField.text = tio.baudrate
+                                }
+                            }
                         }
                     }
                     // A few values each: the host's plugin pages show choices like
@@ -1249,6 +1304,18 @@ Window {
                             value: typeof tio !== "undefined" ? tio.flow : ""
                             onPicked: function (choice) { tio.setFlow(choice) }
                         }
+                    }
+                    // TIO-009's honest note, where the serial parameters live:
+                    // no such CLI option in tio, and the levels were never
+                    // measured, so neither "held" nor "safe" is claimed.
+                    Label {
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                        color: DesignTokens.mutedColor
+                        font.pixelSize: DesignTokens.fontSmall
+                        text: window.tr(
+                            "控制线 DTR / RTS：tio 3.9 无此选项，默认行为未实测，不标「保持/安全」。",
+                            "Control lines DTR / RTS: no such option in tio 3.9, defaults not measured; neither held nor safe is claimed.")
                     }
                 }
 
@@ -1370,12 +1437,7 @@ Window {
                                         wrapMode: Text.WordWrap
                                         color: DesignTokens.mutedColor
                                         font.pixelSize: DesignTokens.fontSmall
-                                        text: !modelData.available
-                                              ? window.tr("这台机器没有：不能选", "not on this machine: not selectable")
-                                              : modelData.owned
-                                                ? window.tr("tio 是我们创建的子进程：停止可靠", "tio is the child process we create: Stop is reliable")
-                                                : window.tr("tio 由 Windows Terminal 创建：停止靠标题与创建时间定位，归属受限",
-                                                            "Windows Terminal creates tio: Stop finds it by title and creation time, ownership is limited")
+                                        text: modelData.detail
                                     }
                                 }
                                 Item { Layout.fillWidth: true }
