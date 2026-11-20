@@ -53,11 +53,14 @@ inline std::vector<Row> buildRows(const Snapshot& s, Browse browse, const Lang& 
     }
 
     // The gates no other port can fix: a broken package, an unusable parameter
-    // set, no terminal backend. Port-specific gates (port, portBusy, identity)
-    // belong to one port, so the launch attempt names them in the toast.
+    // set, no terminal backend. The port-specific gates (port, portBusy,
+    // identity) belong to one port, and the session gate to the tab that holds
+    // it, so those are named by the launch attempt's toast instead of greying
+    // every row: a session running on COM8 must not block COM9.
     Readiness shared;
     for (const Gate gate : s.defaultReadiness.blocking) {
-        if (gate != Gate::Port && gate != Gate::PortBusy && gate != Gate::Identity)
+        if (gate != Gate::Port && gate != Gate::PortBusy && gate != Gate::Identity
+            && gate != Gate::Session)
             shared.blocking.push_back(gate);
     }
 

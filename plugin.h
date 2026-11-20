@@ -86,10 +86,29 @@ protected:
         if (q.command != "tio")
             return {};
 
-        // A query means the user typed again: the candidate list they were
-        // browsing is no longer the answer, so the main list comes back.
-        m_browse = Browse::None;
+        // The ports are read here, not only when the process started: this plugin
+        // is resident, so a device plugged in or pulled out since then is what the
+        // list has to show. The rerun below keeps it true while the list is on
+        // screen, without the user typing again.
+        core().controller().refreshPorts();
+        // A candidate list stays until the words change. The host asks the same
+        // query again for a rerun, and that is not the user typing: dropping the
+        // list then would snatch the baud rates away while they are being read.
+        if (q.raw != m_answeredRaw)
+            m_browse = Browse::None;
+        m_answeredRaw = q.raw;
         return items(rows());
+    }
+
+    // The rows are live: while they are shown the host asks again every few
+    // seconds, so a serial device coming or going shows up by itself. The ids
+    // stay the same, so the keyboard stays on its row.
+    winshun::Json queryResult(const winshun::Query& q) override
+    {
+        winshun::Json::Object answer {{"items", winshun::itemsJson(query(q))}};
+        if (q.command == "tio")
+            answer["rerun"] = static_cast<long long>(3);
+        return winshun::Json(std::move(answer));
     }
 
     winshun::Effects action(const winshun::ActionRequest& request) override
@@ -261,6 +280,9 @@ private:
     }
 
     Browse m_browse = Browse::None;
+    // The input the current list answers; a query for the same words is the host
+    // asking again (a rerun) rather than the user typing something new.
+    std::string m_answeredRaw;
 };
 
 // One serve loop, shared by the console binary and the DLL's worker thread.

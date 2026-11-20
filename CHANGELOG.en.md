@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.1] - 2026-11-20
+
+### Fixes: the list follows the desk, and one session no longer blocks the others
+
+- **The search box re-reads the ports on every answer** (`Controller::refreshPorts()`: enumeration, sessions that left, the focused port's identity), and a shown list asks the host to ask again every 3 s (`queryResult` → `rerun`). The plugin is resident, so before this the rows kept the ports found when the process started: a device unplugged afterwards stayed in the list, and Enter started tio on a port that was no longer there. The same call is made when the standalone window comes up, and the window's 2 s tick now asks only for the ports instead of re-verifying the whole package.
+- **A running session blocks its own port only.** The session gate was treated as one no other port could fix, so with COM8 running every other port's launch row read "launch blocked · session active" and could not start. It now belongs with the port's own gates (`port`, `portBusy`, `identity`) and is named by that launch's toast: COM8 running leaves COM9 free to launch.
+- A candidate list (the baud rates) survives the host asking the same query again; it is dropped when the words change, as before.
+
 ## [0.2.0] - 2026-11-18
 
 ### Configuration ownership: the host's settings page and the plugin split the keys

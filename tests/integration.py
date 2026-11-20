@@ -10,9 +10,10 @@ are announced to the host over winshun/settings/update and stay out of
 tio.json; the advanced keys persist in the file. By default nothing is
 launched on a port: every check stops at query/action/details.
 
-`--launch` adds the one case that needs a real process: Enter on the launch row,
-the running row, and Enter again to stop. That holds the serial port for as long
-as the terminal lives, so it is opt-in.
+`--launch` adds the cases that need a real process: Enter on the launch row, the
+running row, and Enter again to stop; and, when the machine has a second device,
+a session started on it while the first one runs. That holds the serial ports for
+as long as the terminals live, so it is opt-in.
 """
 from __future__ import annotations
 
@@ -225,6 +226,32 @@ def main() -> int:
             for gone in ("port", "control", "diagnostics", "openWindow"):
                 check(gone not in ids, f"the old {gone} row is gone")
 
+            # The answer is live: the rows are the ports the machine reports now,
+            # not the ones it had when the process started, and the host is asked
+            # to ask again while the list is shown.
+            again = plugin.call(
+                "query",
+                {"queryId": 3, "command": "tio", "trigger": "keyword", "keyword": "tio",
+                 "text": "", "raw": "tio", "limit": 200},
+                3,
+            )
+            rerun = (again.get("result") or {}).get("rerun", 0)
+            check(rerun > 0, "the answer asks to be asked again", str(rerun))
+            check(answer_items(again) == items, "asking again answers the same rows")
+            probe = subprocess.run([str(EXE), "--probe", "ports"], capture_output=True,
+                                   text=True, encoding="utf-8")
+            enumerated = set()
+            for line in probe.stdout.splitlines():
+                if not line.startswith("COM"):
+                    continue
+                head = line[3:].split("\t", 1)[0].split(" ", 1)[0]
+                if head.isdigit():
+                    enumerated.add(int(head))
+            listed = {int(str(i.get("id", ""))[5:]) for i in launch_rows(items)}
+            if enumerated:
+                check(listed == enumerated, "the rows are the ports the machine has now",
+                      f"rows={sorted(listed)} enumerated={sorted(enumerated)}")
+
             launch = launch_row(items)
             check(launch.get("title", "").startswith("tio"), "the launch row names tio",
                   launch.get("title", ""))
@@ -324,6 +351,33 @@ def main() -> int:
                     handed = plugin.published()
                     check(str(handed.get("port", "")).startswith("COM"),
                           "the launched port is announced to the host", str(handed))
+
+                    # A session holds its own port and nothing else. On a desk
+                    # with a second device attached, that port's row is still a
+                    # launch row while the first session runs, and it starts.
+                    first_id = running.get("id", "")
+                    idle = [row for row in launch_rows(plugin.query(73))
+                            if (row.get("actions") or [{}])[0].get("id") == "launchPort"]
+                    second_id = idle[0].get("id", "") if idle else ""
+                    if idle:
+                        check(idle[0].get("valid") is not False,
+                              "another port stays launchable while a session runs",
+                              idle[0].get("subtitle", ""))
+                        second = find(replaced(plugin.action("launchPort", idle[0], 74)),
+                                      second_id)
+                        check((second.get("actions") or [{}])[0].get("id") == "stopPort",
+                              "a second port starts while the first runs",
+                              str(second.get("actions") or second))
+                        both = [row for row in launch_rows(plugin.query(75))
+                                if (row.get("actions") or [{}])[0].get("id") == "stopPort"]
+                        check({row.get("id") for row in both} == {first_id, second_id},
+                              "both ports run at once", str([row.get("id") for row in both]))
+
+                        stopped_second = replaced(plugin.action("stopPort", second, 76))
+                        check((find(stopped_second, second_id).get("actions") or [{}])[0].get("id")
+                              == "launchPort", "the second port stops on its own row")
+                        check((find(stopped_second, first_id).get("actions") or [{}])[0].get("id")
+                              == "stopPort", "stopping one session leaves the other running")
 
                     time.sleep(1)
                     stopped = plugin.action("stopPort", running, 72)

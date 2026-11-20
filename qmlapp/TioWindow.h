@@ -247,7 +247,12 @@ public:
     Q_INVOKABLE void setParity(const QString& parity);
     Q_INVOKABLE void setStopBits(const QString& bits);
     Q_INVOKABLE void setFlow(const QString& flow);
-    Q_INVOKABLE void setBackend(const QString& id);    Q_INVOKABLE void refresh();
+    Q_INVOKABLE void setBackend(const QString& id);
+    Q_INVOKABLE void refresh();
+    // The cheap half of refresh(): the ports and the sessions on them. The QML
+    // timer calls it, and the window calls it when it comes up, so a device
+    // plugged in or pulled out since the last look is in the port list.
+    Q_INVOKABLE void refreshPorts();
     // Opens a document that ships in the package folder ("THIRD_PARTY.md",
     // "manifest/files.json"): the integrity card's verifiable links.
     Q_INVOKABLE void openPackageDoc(const QString& name);

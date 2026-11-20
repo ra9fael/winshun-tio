@@ -42,7 +42,7 @@ WinShun                          tio.exe (protocol thread)
 
 - The main list stays lean on purpose: one launch row per port, the baud-rate shortcuts, and one "open standalone window" row that doubles as the configuration summary. There is no port row, no backend list, no control-line note and no diagnostics view in the search box — the port and every parameter live in the window, the report in the window's diagnostics card and in `details()`.
 - `adopt(form, keys)` takes only the listed keys: one choice is the final answer. The keys the host's page owns (port/baud rate/backend) go back to the page over `winshun/settings/update`; the advanced keys go into `tio.json`.
-- Every `query` resets `m_browse`: the user typed again, so a candidate list is no longer the answer.
+- Every `query` re-reads the ports (`Controller::refreshPorts()`) and asks the host to ask again in a few seconds (`queryResult`, `rerun` 3 s): a resident plugin keeps running while devices are plugged and pulled, so the rows have to be the ports the machine has now. `m_browse` is kept while the words are unchanged — a rerun repeats the same query, and dropping the list then would snatch the baud rates away while they are being read.
 - `details()` returns the diagnostics text: the host's details pane can show the whole report without opening the window.
 
 ## 3. Path B: the window
@@ -120,7 +120,7 @@ Three details that cannot be skipped:
 | `Backend` | resolution ends at `Backend::None` |
 | `Session` | a session is already running |
 
-The order is fixed, so the launch row names the same first thing to fix every time. **Parameter rows are never gated**: a broken package must not lock the form.
+The order is fixed, so the launch row names the same first thing to fix every time. **Parameter rows are never gated**: a broken package must not lock the form. In the search box only the gates no port can fix — `Package`, `Parameters`, `Backend` — are written into every launch row; `Port`, `PortBusy`, `Identity` and `Session` belong to one port or one tab and are named by that launch's toast, so a session on COM8 leaves COM9's row free to start.
 
 ## 6. Building
 

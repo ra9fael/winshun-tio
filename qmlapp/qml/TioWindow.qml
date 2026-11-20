@@ -154,12 +154,13 @@ Window {
 
     // A session can also leave on its own (the user closes the terminal): the
     // only reliable way to notice is to ask the controller again. Ticking only
-    // while a session is active keeps an idle window cheap.
+    // while a session is active keeps an idle window cheap; the ports are the
+    // half worth asking, not the package's hashes.
     Timer {
         interval: 2000
         repeat: true
         running: typeof tio !== "undefined" && tio.sessionActive
-        onTriggered: if (typeof tio !== "undefined") tio.refresh()
+        onTriggered: if (typeof tio !== "undefined") tio.refreshPorts()
     }
 
     // The shared-socket consumer runs on its own thread; this publishes the new

@@ -4,11 +4,25 @@
 
 What was run on which machine, what it showed, and what has not run. **Only what this file calls "measured" has been verified.**
 
-Environment: Windows 11 x64 ｜ MSVC 19.51 (VS 18 Community) ｜ CMake 3.29.2 ｜ Ninja 1.12 ｜ Qt 6.12.0 (`D:\tools\Qt\6.12.0\msvc2022_64`) ｜ WinShun 0.30.0 (`C:\Program Files\WinShun`) ｜ this machine's serial port: `Silicon Labs CP210x (COM8)`
+Environment: Windows 11 x64 ｜ MSVC 19.51 (VS 18 Community) ｜ CMake 3.29.2 ｜ Ninja 1.12 ｜ Qt 6.12.0 (`D:\tools\Qt\6.12.0\msvc2022_64`) ｜ WinShun 0.30.0 (`C:\Program Files\WinShun`) ｜ serial devices on this desk: `Silicon Labs CP210x (COM8)` and `WCH CH347 dual serial (COM10, COM11)`
 
 ## 1. The checks that ran
 
-The 0.2.0 round (the configuration-ownership rework) is measured below; the 0.1.4 round's hardware and post-packaging records are kept in section 2.
+The 0.2.1 round (the port list following the desk, one session no longer blocking the others) is measured below; the 0.2.0 and 0.1.4 rounds are kept in sections 2 and 3.
+
+| Layer | Command | Result | Notes |
+|---|---|---|---|
+| L0 | `build\msvc\tests\tio_tests.exe` | **299 / 299 pass** | new: a running session blocks its own port only (COM8 running leaves COM9's row a selectable `launchPort`), a shared gate (`Package`) still reaching every row, and a port missing from the enumeration having no row |
+| L0' | `build\msvc\tests\tio_window_tests.exe` | **124 / 124 pass** | the window model (unchanged this round): the custom baud rate accepted/refused, the auto preference surviving a save, key-scoped saves, the dirty form surviving an outside change, backend availability, diagnostics |
+| ctest suite | `ctest --test-dir build\msvc -C Release` | **5 / 5 pass** | tio_logic, tio_window_model, tio_share_client, tio_ansi_text, tio_share_port_preflight |
+| L2 | `python tests\integration.py` | **55 / 55 pass** | new: the answer carries `rerun`, asking again answers the same rows, and the rows' port set equals what `tio.exe --probe ports` enumerates at that moment |
+| L2+ | `python tests\integration.py --launch` | **67 / 67 pass** | two real sessions on two devices at once: COM8 running leaves COM10's row launchable, COM10 starts while COM8 runs, both rows say Stop, stopping one leaves the other running; then Stop → Launch on the first |
+| L2' | `python tests\window_check.py` | **28 / 28 pass** | zh/en × light/dark + the host's four styles, no QML warnings |
+| Packaging | `python tools\package.py --dev` | pass | `dist\development\ra9fael.tio-0.2.1.wsplugin`, sha256 `4c8b0aac84c6c184c45c541b9d205c37d7d69c8eaa49f2f054531e67c41bc41e` |
+| Install | `ws plugin install` | pass | 0.2.0 → 0.2.1, enabled |
+| Device plug and unplug | observation script, three windows totalling 25 minutes | **not measured** | the port set stayed `COM8, COM10, COM11` throughout (a later process started on `COM8` alone and never changed). What the change rests on: every answer re-reads the ports, `samePorts` decides whether anything moved, and `testPortIsolation` asserts that a port missing from the enumeration has no row. The physical unplug is left to do with the device at hand |
+
+The 0.2.0 round (the configuration-ownership rework):
 
 | Layer | Command | Result | Notes |
 |---|---|---|---|

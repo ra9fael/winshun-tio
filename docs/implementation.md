@@ -42,7 +42,7 @@ WinShun                          tio.exe (protocol thread)
 
 - 主列表刻意精简：每个串口一条启动行、波特率快捷项、一行「打开独立窗口」（同时是配置摘要）。端口行、后端列表、控制线说明与诊断视图都不在搜索框里——端口与完整参数在窗口里，诊断报告在窗口的「诊断」卡和 `details()` 里。
 - `adopt(form, keys)` 只收列出的键：一次选择就是最终结果；其中宿主持有的键（端口/波特率/后端）经 `winshun/settings/update` 写回设置页，高级键写进 `tio.json`。
-- `query` 一律把 `m_browse` 复位：用户又打字了，候选列表不再是答案。
+- `query` 每次都重读端口（`Controller::refreshPorts()`），并通过 `queryResult` 的 `rerun`（3 秒）请宿主隔几秒再问一次：插件是常驻的，运行期间插拔设备不会重启进程，所以行必须是机器此刻的端口。词没变时保留 `m_browse`——rerun 重发的是同一条查询，不是用户又打字了，这时把候选列表收掉会在用户正读波特率时把它抢走。
 - `details()` 返回诊断文本：宿主的详情面板可以读整份报告，不用开窗。
 
 ## 3. 路径 B：窗口
@@ -120,7 +120,7 @@ winshunTioMain(appDir)                    GUI thread
 | `Backend` | 解析后是 `Backend::None` |
 | `Session` | 已有会话在跑 |
 
-顺序固定，所以启动行写的原因每次都是同一句。**参数行不受门影响**：包坏了也不能锁住界面。
+顺序固定，所以启动行写的原因每次都是同一句。**参数行不受门影响**：包坏了也不能锁住界面。搜索框里只有 `Package` / `Parameters` / `Backend` 这类与端口无关的门会写进每一条启动行；`Port` / `PortBusy` / `Identity` / `Session` 属于单个端口或单个页签，由那次启动的 toast 报出——COM8 跑着，不影响 COM9 那一行照常启动。
 
 ## 6. 构建
 

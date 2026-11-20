@@ -812,6 +812,77 @@ static void testPortRows()
     CHECK(disabled == 2, "a broken package blocks every port's row", std::to_string(disabled));
 }
 
+// A session holds its own port and never the others: the running port's row
+// stops it, and every other port still starts. The default form's gates carry
+// the session gate while one of its tabs runs, and that gate must not reach the
+// other rows.
+static void testPortIsolation()
+{
+    Lang lang;
+    Snapshot s;
+    s.port = parsePort("COM8");
+    s.serial.baudrate = 115200;
+    PortInfo eight;
+    eight.com = 8;
+    eight.instanceId = L"USB\\VID_10C4&PID_EA60\\0001";
+    eight.description = L"Silicon Labs CP210x USB to UART Bridge (COM8)";
+    PortInfo nine;
+    nine.com = 9;
+    nine.instanceId = L"USB\\VID_2E8A&PID_4031&MI_02\\8&39BDACDC&0&0002";
+    nine.description = L"USB Serial Device (COM9)";
+    s.ports = {eight, nine};
+
+    SessionView running;
+    running.form.port = L"COM8";
+    running.form.serial.baudrate = 115200;
+    running.session.com = 8;
+    running.session.phase = Phase::Running;
+    running.session.pid = 4242;
+    running.focused = true;
+    s.sessions.push_back(running);
+    // What the controller reports for a default form bound to the running tab.
+    s.defaultReadiness.blocking.push_back(Gate::Session);
+
+    const std::vector<Row> rows = buildRows(s, Browse::None, lang);
+    const Row* own = nullptr;
+    const Row* other = nullptr;
+    for (const Row& row : rows) {
+        if (row.id == "port:8")
+            own = &row;
+        if (row.id == "port:9")
+            other = &row;
+    }
+    CHECK(own != nullptr && own->action == "stopPort", "the running port's row stops it");
+    CHECK(own != nullptr && !own->disabled, "the running port's row stays selectable");
+    CHECK(other != nullptr && other->action == "launchPort",
+        "another port still launches while a session runs");
+    CHECK(other != nullptr && !other->disabled,
+        "a running session does not block another port's row");
+    CHECK_D(other != nullptr && other->subtitle.find(lang.blocked) == std::string::npos,
+        "another port's row carries no blocked reason", other ? other->subtitle : "");
+
+    // A package is not any port's fault: it still greys every row.
+    Snapshot broken = s;
+    broken.defaultReadiness.blocking.push_back(Gate::Package);
+    int disabled = 0;
+    for (const Row& row : buildRows(broken, Browse::None, lang))
+        if (row.id == "port:9" && row.disabled)
+            ++disabled;
+    CHECK(disabled == 1, "a shared gate still reaches every port's row");
+
+    // A port the enumeration no longer has has no row: what is configured is not
+    // forced back into the list while another port is there.
+    Snapshot unplugged = s;
+    unplugged.sessions.clear();
+    unplugged.defaultReadiness.blocking.clear();
+    unplugged.ports = {nine};
+    bool stale = false;
+    for (const Row& row : buildRows(unplugged, Browse::None, lang))
+        if (row.id == "port:8")
+            stale = true;
+    CHECK(!stale, "a port that left the enumeration has no row");
+}
+
 // The appearance contract: the look is read from the host's nativeLook, the
 // style, the corners and the size, so the window follows all four styles.
 static void testAppearance()
@@ -898,6 +969,7 @@ int main()
     testWindowEntry();
     testSessionRows();
     testPortRows();
+    testPortIsolation();
     testAppearance();
 
     if (g_failed == 0) {

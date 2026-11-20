@@ -1218,6 +1218,14 @@ void TioWindow::refresh()
     emit changed();
 }
 
+void TioWindow::refreshPorts()
+{
+    // Everything the window draws about the desk is in `ports`: a device coming
+    // or going is enough to repaint, and the controller only notifies when it
+    // actually moved, so an idle tick costs nothing on screen.
+    core().controller().refreshPorts();
+}
+
 // The integrity card's verifiable links: the documents ship in the plugin
 // folder, so the file URL opens the exact copy the launcher verified.
 void TioWindow::openPackageDoc(const QString& name)

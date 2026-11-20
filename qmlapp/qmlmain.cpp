@@ -166,6 +166,9 @@ bool openWindow(QString& error)
         window->resize(780, 720);
         return true;
     }
+    // The window is the place a port is chosen, so it starts on the ports that
+    // are plugged in now: the search box may have been answered long ago.
+    tioplug::windowModel()->refreshPorts();
     window->show();
     window->raise();
     window->requestActivate();

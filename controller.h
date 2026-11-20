@@ -99,8 +99,7 @@ public:
             m_backends = probeBackends();
             m_package = verifyPackage(m_pluginDir);
             m_packageVersion = m_package.packageVersion;
-            m_ports = enumeratePorts();
-            reconcileSessionsLocked();
+            refreshPortsLocked();
             applySettingsLocked();
             ensureTabLocked();
             refreshIdentityLocked();
@@ -109,6 +108,24 @@ public:
             notify = m_notify;
         }
         writeHost(publish);
+        if (notify)
+            notify();
+    }
+
+    // Re-reads the ports and what depends on them being there: the sessions whose
+    // process left, the focused port's identity. The package, the backends and the
+    // settings are not touched, so this is cheap enough to run on every answer.
+    // A resident plugin never restarts on its own, and the desk does change under
+    // it: the list has to show the devices plugged in now, not the ones that were
+    // there when the process started.
+    void refreshPorts()
+    {
+        Notify notify;
+        {
+            const std::lock_guard lock(m_mutex);
+            if (refreshPortsLocked())
+                notify = m_notify;
+        }
         if (notify)
             notify();
     }
@@ -125,16 +142,65 @@ private:
     };
 
     // Marks running sessions exited when their processes are gone. The creation
-    // time is the identity, so a reused PID is never mistaken for ours.
-    void reconcileSessionsLocked()
+    // time is the identity, so a reused PID is never mistaken for ours. Returns
+    // whether anything moved, so a caller knows there is something to repaint.
+    bool reconcileSessionsLocked()
     {
+        bool moved = false;
         for (SessionTab& tab : m_tabs) {
             if (tab.session.phase != Phase::Running || tab.session.pid == 0)
                 continue;
             if (processAlive(tab.session.pid, tab.session.created))
                 continue;
-            markExited(tab.session);
+            moved = markExited(tab.session) || moved;
         }
+        return moved;
+    }
+
+    static const PortInfo* findPort(const std::vector<PortInfo>& ports, int com)
+    {
+        for (const PortInfo& info : ports)
+            if (info.com == com)
+                return &info;
+        return nullptr;
+    }
+
+    // The same machine wiring: the same ports, each still the same device under
+    // the same name. A replug that keeps the COM number but hands it to another
+    // device is a change, because that is what the identity is read from.
+    static bool sameDevice(const PortInfo* a, const PortInfo* b)
+    {
+        if (!a || !b)
+            return !a && !b;
+        return a->instanceId == b->instanceId && a->description == b->description;
+    }
+
+    static bool samePorts(const std::vector<PortInfo>& a, const std::vector<PortInfo>& b)
+    {
+        if (a.size() != b.size())
+            return false;
+        for (std::size_t i = 0; i < a.size(); ++i)
+            if (a[i].com != b[i].com || !sameDevice(&a[i], &b[i]))
+                return false;
+        return true;
+    }
+
+    // The port half of refresh(): enumerate, notice sessions that left, re-read
+    // the identity when the focused port's device changed. Returns whether a view
+    // has anything new to draw.
+    bool refreshPortsLocked()
+    {
+        std::vector<PortInfo> ports = enumeratePorts();
+        ensureTabLocked();
+        const int focusedCom = m_tabs[m_activeTab].form.parsed().com;
+        const bool deviceMoved = focusedCom > 0
+            && !sameDevice(findPort(m_ports, focusedCom), findPort(ports, focusedCom));
+        const bool moved = !samePorts(m_ports, ports);
+        m_ports = std::move(ports);
+        const bool sessionsMoved = reconcileSessionsLocked();
+        if (deviceMoved)
+            refreshIdentityLocked();
+        return moved || sessionsMoved || deviceMoved;
     }
 
     // The window always has something to draw: the first tab is seeded from the

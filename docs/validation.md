@@ -4,11 +4,25 @@
 
 本轮在什么机器上、跑了什么、结果如何、什么还没跑。**只有这一节里写了「实测」的，才算验证过。**
 
-环境：Windows 11 x64 ｜ MSVC 19.51（VS 18 Community）｜ CMake 3.29.2 ｜ Ninja 1.12 ｜ Qt 6.12.0（`D:\tools\Qt\6.12.0\msvc2022_64`）｜ Win顺 0.30.0（`C:\Program Files\WinShun`）｜ 本机串口 `Silicon Labs CP210x (COM8)`
+环境：Windows 11 x64 ｜ MSVC 19.51（VS 18 Community）｜ CMake 3.29.2 ｜ Ninja 1.12 ｜ Qt 6.12.0（`D:\tools\Qt\6.12.0\msvc2022_64`）｜ Win顺 0.30.0（`C:\Program Files\WinShun`）｜ 桌上串口：`Silicon Labs CP210x (COM8)`、`WCH CH347 双串口 (COM10, COM11)`
 
 ## 1. 跑过的检查
 
-0.2.0 轮（配置所有权改造）实测如下；0.1.4 轮的硬件与打包记录在第 2 节保留。
+0.2.1 轮（端口随插拔更新、会话门按端口隔离）实测如下；0.2.0 轮与 0.1.4 轮的记录在第 2、3 节保留。
+
+| 层 | 命令 | 结果 | 说明 |
+|---|---|---|---|
+| L0 | `build\msvc\tests\tio_tests.exe` | **299 / 299 通过** | 新增：运行中的会话只挡自己的端口（COM8 跑着，COM9 行仍是 `launchPort` 且不 disabled）、共享门（`Package`）仍写进每一行、枚举里没有的端口不再出行 |
+| L0' | `build\msvc\tests\tio_window_tests.exe` | **124 / 124 通过** | 窗口模型（本轮未改）：自定义波特率接受/拒绝、auto 偏好保存后保持、按键提交的保存、脏表单保护、后端可选、诊断 |
+| ctest 全套 | `ctest --test-dir build\msvc -C Release` | **5 / 5 通过** | tio_logic、tio_window_model、tio_share_client、tio_ansi_text、tio_share_port_preflight |
+| L2 | `python tests\integration.py` | **55 / 55 通过** | 新增：回答带 `rerun`、重问同一条查询答案不变、行里的端口集合等于 `tio.exe --probe ports` 此刻枚举到的端口 |
+| L2+ | `python tests\integration.py --launch` | **67 / 67 通过** | 两个设备上同时跑两个真会话：COM8 运行中 COM10 那行仍可启动、COM10 起来后两行都是停止、停掉 COM10 不影响 COM8；随后 COM8 停止 → 回到启动行 |
+| L2' | `python tests\window_check.py` | **28 / 28 通过** | zh/en × light/dark + 宿主四种风格，无 QML 警告 |
+| 打包 | `python tools\package.py --dev` | 通过 | `dist\development\ra9fael.tio-0.2.1.wsplugin`，sha256 `4c8b0aac84c6c184c45c541b9d205c37d7d69c8eaa49f2f054531e67c41bc41e` |
+| 安装 | `ws plugin install` | 通过 | 0.2.0 → 0.2.1，已启用 |
+| 插拔随动 | 观察脚本，三次窗口共 25 分钟 | **未实测** | 窗口内端口集合一直是 `COM8, COM10, COM11`（后一次进程从 `COM8` 起，期间没有变化）。改动本身的证据是：每次回答都重读、`samePorts` 判变化、`testPortIsolation` 断言「枚举里没有的端口不出行」；真实拔插待设备在手边时补做 |
+
+0.2.0 轮（配置所有权改造）的记录：
 
 | 层 | 命令 | 结果 | 说明 |
 |---|---|---|---|
