@@ -68,7 +68,7 @@ winshunTioMain(appDir)                    GUI thread
   app.exec()
 ```
 
-The window is a `QQmlApplicationEngine` plus `TioWindow.qml`; the model is `tioplug::TioWindow` (`Q_PROPERTY` to read, `Q_INVOKABLE` to change). Its constructor attaches a `Notify` to the `Controller` and uses `QMetaObject::invokeMethod(..., Qt::QueuedConnection)` to push the repaint back to the GUI thread, because the callback arrives on **any** thread (the protocol thread may be in the middle of a launch).
+The window is a `QQmlApplicationEngine` plus `TioWindow.qml`; the model is `tioplug::TioWindow` (`Q_PROPERTY` to read, `Q_INVOKABLE` to change). Its constructor attaches a `Notify` to the `Controller` and uses `QMetaObject::invokeMethod(..., Qt::QueuedConnection)` to push the repaint back to the GUI thread, because the callback arrives on **any** thread (the protocol thread may be in the middle of a launch). `McpCard.qml` generates stdio JSON for Claude Desktop, Claude Code, Cursor or VS Code and copies it to the clipboard without writing any client configuration file.
 
 The `openWindow` action runs on the protocol thread; the hook moves window creation to the GUI thread with `Qt::BlockingQueuedConnection`, so the action can honestly answer whether it opened.
 

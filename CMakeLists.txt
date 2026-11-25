@@ -86,7 +86,8 @@ set(tio_qml
   qmlapp/qml/LinkLabel.qml
   qmlapp/qml/TokenComboBox.qml
   qmlapp/qml/TokenSegmented.qml
-  qmlapp/qml/TokenButton.qml)
+  qmlapp/qml/TokenButton.qml
+  qmlapp/qml/McpCard.qml)
 set_source_files_properties("qmlapp/qml/DesignTokens.qml" PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 # Flattened into the module root (qrc:/qt/qml/Tio/<Name>.qml), as ra9fael.qr and
 # binarylab do: the components import each other and the DesignTokens singleton by

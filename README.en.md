@@ -2,7 +2,7 @@
 
 Opens a serial terminal with [tio](https://github.com/tio/tio) bundled inside the plugin package. **Pick the port in the search box and press Enter to start**; every parameter, remote sharing and the defaults live in the standalone window.
 
-Current version: **v0.2.1**.
+Current version: **v0.2.2**.
 
 ## Interactive online demo (no install)
 
@@ -75,7 +75,7 @@ A launch takes what is on screen: it writes the port/baud rate/backend it starte
 
 Reached from its own "**Open standalone window**" row in the result list (Enter), or the launch row's menu (Ctrl+Enter).
 
-The same groups, plus tabs, a Port & parameters card, device identity, session status and diagnostics. An advanced section can explicitly confirm bidirectional remote serial sharing on TCP `54321`; it warns that all interfaces are exposed, remote clients can write to the device, and slow clients may stall tio. Launch and restart require explicit confirmation when sharing is enabled.
+The same groups, plus tabs, a Port & parameters card, device identity, session status, an **MCP use** card and diagnostics. The MCP card generates a client-specific JSON configuration for Claude Desktop, Claude Code, Cursor or VS Code and copies it to the clipboard; it displays the configuration but never writes the AI client's files. An advanced section can explicitly confirm bidirectional remote serial sharing on TCP `54321`; it warns that all interfaces are exposed, remote clients can write to the device, and slow clients may stall tio. Launch and restart require explicit confirmation when sharing is enabled.
 
 "+" opens a session straight away and leaves the port empty until you pick one in Port & parameters; a port is exclusive only while a session runs, so picking the same one is allowed and Launch explains why it cannot go. Remote sharing applies only to the explicitly confirmed standalone-window session; it is not saved as the default and remains off after restart/reopen.
 

@@ -19,6 +19,9 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QGuiApplication>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QTimer>
 #include <QUrl>
 
@@ -43,6 +46,15 @@ std::mutex g_hookMutex;
 QString fromStd(const std::string& text) { return QString::fromStdString(text); }
 
 QString number(int value) { return QString::number(value); }
+
+QString mcpRelayPath()
+{
+    QString appDir = qEnvironmentVariable("WS_APP_DIR");
+    if (appDir.isEmpty())
+        appDir = QCoreApplication::applicationDirPath();
+    const QString path = QDir(appDir).filePath(u"WinShunMcp.exe"_s);
+    return QFileInfo::exists(path) ? QDir::toNativeSeparators(path) : QString();
+}
 
 // The values the pinned tio build accepts, in the order the cycle actions use.
 QStringList rates()
@@ -819,6 +831,33 @@ void TioWindow::setShareLog(bool on)
 
 QString TioWindow::shareLogPath() const { return m_shareLogPath; }
 
+void TioWindow::setMcpAgent(const QString& agent)
+{
+    if (agent != u"claude-desktop" && agent != u"claude-code"
+        && agent != u"cursor" && agent != u"vscode")
+        return;
+    if (m_mcpAgent == agent)
+        return;
+    m_mcpAgent = agent;
+    emit changed();
+}
+
+QString TioWindow::mcpConfig() const
+{
+    const QString relay = mcpRelayPath();
+    if (relay.isEmpty())
+        return {};
+    QJsonObject entry;
+    if (m_mcpAgent == u"vscode")
+        entry.insert(u"type"_s, u"stdio"_s);
+    entry.insert(u"command"_s, relay);
+    entry.insert(u"args"_s, QJsonArray {u"--start-winshun"_s});
+    const QString topKey = m_mcpAgent == u"vscode" ? u"servers"_s : u"mcpServers"_s;
+    return QString::fromUtf8(QJsonDocument(QJsonObject {
+        {topKey, QJsonObject {{u"winshun"_s, entry}}}
+    }).toJson(QJsonDocument::Indented));
+}
+
 // Whether this process may write the clipboard at all.
 //
 // WinShun runs plugins inside a job object and enforces manifest permissions
@@ -920,6 +959,21 @@ void TioWindow::copyShareContent()
     }
     emit notice(zh() ? "已复制 " + QString::number(text.size()) + " 个字符"
                      : "copied " + QString::number(text.size()) + " characters");
+}
+
+void TioWindow::copyMcpConfig()
+{
+    const QString config = mcpConfig();
+    if (config.isEmpty()) {
+        emit notice(zh() ? "找不到 WinShunMcp.exe，请从 Win顺 安装目录运行插件"
+                         : "WinShunMcp.exe was not found; run the plugin from an installed WinShun");
+        return;
+    }
+    if (!writeClipboardText(config)) {
+        emit notice(copyFailureText(zh()));
+        return;
+    }
+    emit notice(zh() ? "已复制 MCP 配置" : "MCP configuration copied");
 }
 
 

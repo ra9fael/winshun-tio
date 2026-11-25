@@ -1447,6 +1447,11 @@ Window {
                     }
                 }
 
+                McpCard {
+                    id: mcpCard
+                    zh: window.zh
+                }
+
                 // ---- package ----
                 // The integrity card carries the third-party record itself: what
                 // each component is, where it came from, which licence text

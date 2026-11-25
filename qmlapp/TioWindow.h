@@ -119,6 +119,11 @@ class TioWindow : public QObject {
     // The folder the auto-log writes into; empty until the first byte is logged.
     Q_PROPERTY(QString shareLogDir READ shareLogDir NOTIFY changed)
 
+    // A ready-to-paste stdio configuration for common MCP clients. The path
+    // points at WinShun's relay, not at the plugin's own process.
+    Q_PROPERTY(QString mcpAgent READ mcpAgent WRITE setMcpAgent NOTIFY changed)
+    Q_PROPERTY(QString mcpConfig READ mcpConfig NOTIFY changed)
+
 public:
     explicit TioWindow(QObject* parent = nullptr);
     ~TioWindow() override;
@@ -197,6 +202,9 @@ public:
     bool shareHexAscii() const;
     void setShareHexAscii(bool on);
     QString shareLogDir() const;
+    QString mcpAgent() const { return m_mcpAgent; }
+    void setMcpAgent(const QString& agent);
+    QString mcpConfig() const;
     // The logs already written, newest first: [{name, path, bytes, time}]. Empty
     // when nothing has been logged yet.
     Q_INVOKABLE QVariantList shareLogs() const;
@@ -227,6 +235,7 @@ public:
     Q_INVOKABLE void setShareEnabled(bool enabled);
     Q_INVOKABLE bool setSharePort(int port);
     Q_INVOKABLE void copySharePort();
+    Q_INVOKABLE void copyMcpConfig();
     Q_INVOKABLE void clearShareContent();
     // Copies the content exactly as shown (the current format) to the clipboard.
     Q_INVOKABLE void copyShareContent();
@@ -322,6 +331,8 @@ private:
     bool m_shareHexAscii = false;
     QString m_shareLogPath;
     std::uint64_t m_shareLogBytes = 0;
+
+    QString m_mcpAgent = "claude-desktop";
     void appendShareLog(const std::string& bytes);
 };
 

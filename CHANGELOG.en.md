@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.2.2] - 2026-11-26
+
+### MCP use card
+
+- Adds an **MCP use** card to the standalone window: choose Claude Desktop, Claude Code, Cursor or VS Code, generate the matching JSON configuration and copy it; the card never edits AI client files.
+
 ## [0.2.1] - 2026-11-20
 
 ### Fixes: the list follows the desk, and one session no longer blocks the others

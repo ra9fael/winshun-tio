@@ -68,7 +68,7 @@ winshunTioMain(appDir)                    GUI thread
   app.exec()
 ```
 
-窗口本身是 `QQmlApplicationEngine` + `TioWindow.qml`，模型是 `tioplug::TioWindow`（`Q_PROPERTY` 读 + `Q_INVOKABLE` 改）。它的构造里给 `Controller` 装了一个 `Notify`，用 `QMetaObject::invokeMethod(..., Qt::QueuedConnection)` 把刷新甩回 GUI 线程——`Controller` 的回调来自**任意**线程（比如协议线程正在执行的启动）。
+窗口本身是 `QQmlApplicationEngine` + `TioWindow.qml`，模型是 `tioplug::TioWindow`（`Q_PROPERTY` 读 + `Q_INVOKABLE` 改）。它的构造里给 `Controller` 装了一个 `Notify`，用 `QMetaObject::invokeMethod(..., Qt::QueuedConnection)` 把刷新甩回 GUI 线程——`Controller` 的回调来自**任意**线程（比如协议线程正在执行的启动）。窗口中的 `McpCard.qml` 根据选择生成 Claude Desktop、Claude Code、Cursor 或 VS Code 的 stdio JSON，只复制到剪贴板，不写入客户端配置。
 
 `openWindow` 动作在协议线程上被调用，钩子用 `Qt::BlockingQueuedConnection` 把窗口创建搬到 GUI 线程，这样动作能如实回答「开没开成」。
 
