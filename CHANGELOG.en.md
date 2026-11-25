@@ -8,6 +8,13 @@
 - **A running session blocks its own port only.** The session gate was treated as one no other port could fix, so with COM8 running every other port's launch row read "launch blocked · session active" and could not start. It now belongs with the port's own gates (`port`, `portBusy`, `identity`) and is named by that launch's toast: COM8 running leaves COM9 free to launch.
 - A candidate list (the baud rates) survives the host asking the same query again; it is dropped when the words change, as before.
 
+### WinShun MCP serial I/O
+
+- Adds the `tio-io` MCP command: AI can inspect user-shared session status, read `COMn` data by cursor, and create ASCII or HEX serial send plans.
+- Sending is executed by the `sendSerial` action of `tio-io_run`; the session token and socket generation are revalidated before the write, so a stale plan cannot write to a new session.
+- MCP only accesses a tio session that the user explicitly started and shared in the standalone window. It never opens a port, starts tio, or enables sharing, and search-box launches are not shared.
+- Shared-socket writes use 64 KiB chunks and a 500 ms send timeout, so a disconnected or non-reading peer cannot leave an MCP write blocked forever.
+
 ## [0.2.0] - 2026-11-18
 
 ### Configuration ownership: the host's settings page and the plugin split the keys

@@ -45,6 +45,17 @@ WinShun                          tio.exe (protocol thread)
 - `query` 每次都重读端口（`Controller::refreshPorts()`），并通过 `queryResult` 的 `rerun`（3 秒）请宿主隔几秒再问一次：插件是常驻的，运行期间插拔设备不会重启进程，所以行必须是机器此刻的端口。词没变时保留 `m_browse`——rerun 重发的是同一条查询，不是用户又打字了，这时把候选列表收掉会在用户正读波特率时把它抢走。
 - `details()` 返回诊断文本：宿主的详情面板可以读整份报告，不用开窗。
 
+### MCP 串口读写
+
+`tio-io` 是通过 WinShun MCP 暴露的串口读写命令，和搜索框的 `tio` 启动命令共享同一个 `Controller`，但不会创建串口会话：
+
+1. `status` 只列出用户已启动且明确开启共享的会话，并返回共享端口、session token 和 socket generation。
+2. `read COMn` 从该会话的 `ShareClient` 缓冲区按游标读取数据，支持 `ascii` 和 `hex` 格式。
+3. `send COMn` 只返回带有 `bytesHex`、token 和 generation 的发送计划；MCP `_run` 必须用同一个查询和 item id 调用 `sendSerial`。
+4. `Controller::writeShared()` 在写入前再次比对 COM、token、generation 和连接状态。会话重启后，旧计划会被拒绝。
+
+`ShareClient` 通过 tio 的 `-S inet:<port>` socket 收发，不打开第二个串口驱动。发送按 64 KiB 分块，并使用 500 ms `SO_SNDTIMEO`，避免共享 peer 断开或停止读取时永久阻塞。
+
 ## 3. 路径 B：窗口
 
 ```

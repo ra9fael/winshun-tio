@@ -49,6 +49,27 @@ std::string ShareClient::consume(std::uint64_t& cursor) const
     return out;
 }
 
+std::string ShareClient::read(std::uint64_t& cursor, std::size_t maxBytes, bool& overrun) const
+{
+    const std::lock_guard lock(m_mutex);
+    const std::uint64_t end = m_bufferStart + m_buffer.size();
+    overrun = cursor < m_bufferStart;
+    if (overrun)
+        cursor = m_bufferStart;
+    if (cursor >= end || maxBytes == 0)
+        return {};
+    const std::size_t offset = static_cast<std::size_t>(cursor - m_bufferStart);
+    const std::size_t count = std::min(maxBytes, m_buffer.size() - offset);
+    cursor += count;
+    return m_buffer.substr(offset, count);
+}
+
+std::uint64_t ShareClient::oldestBytes() const
+{
+    const std::lock_guard lock(m_mutex);
+    return m_bufferStart;
+}
+
 std::string ShareClient::tail(std::size_t maxBytes) const
 {
     const std::lock_guard lock(m_mutex);
@@ -67,12 +88,20 @@ bool ShareClient::write(const std::string& data)
 {
     if (m_readOnly.load() || data.empty())
         return false;
+    const std::lock_guard lock(m_writeMutex);
     const SOCKET socket = m_socket.load();
     if (socket == INVALID_SOCKET)
         return false;
-    const std::lock_guard lock(m_writeMutex);
-    const int sent = ::send(socket, data.data(), static_cast<int>(data.size()), 0);
-    return sent == static_cast<int>(data.size());
+    std::size_t offset = 0;
+    constexpr std::size_t kSendChunk = 64 * 1024;
+    while (offset < data.size()) {
+        const int count = static_cast<int>(std::min(kSendChunk, data.size() - offset));
+        const int sent = ::send(socket, data.data() + offset, count, 0);
+        if (sent <= 0)
+            return false;
+        offset += static_cast<std::size_t>(sent);
+    }
+    return true;
 }
 
 void ShareClient::clear()
@@ -100,6 +129,7 @@ bool ShareClient::start(const std::string& host, std::uint16_t port)
     m_stop.store(false);
     m_connected.store(false);
     m_port.store(port);
+    m_generation.fetch_add(1);
     m_stop.store(false);
     // A new connection starts a new stream: keeping the old offsets would put a
     // consumer's cursor past bytes it has never seen.
@@ -187,6 +217,9 @@ void ShareClient::run(std::string host, std::uint16_t port)
         if (connected) {
             u_long blocking = 0;
             ::ioctlsocket(socket, FIONBIO, &blocking);
+            const int timeoutMs = 500;
+            ::setsockopt(socket, SOL_SOCKET, SO_SNDTIMEO,
+                reinterpret_cast<const char*>(&timeoutMs), sizeof timeoutMs);
         }
         if (!connected) {
             ::closesocket(socket);
@@ -196,6 +229,7 @@ void ShareClient::run(std::string host, std::uint16_t port)
 
         m_connected.store(true);
         m_socket.store(socket);
+        m_generation.fetch_add(1);
         while (!m_stop.load()) {
             fd_set readable;
             FD_ZERO(&readable);
@@ -215,6 +249,7 @@ void ShareClient::run(std::string host, std::uint16_t port)
             append(receive, static_cast<std::size_t>(count));
         }
 
+        const std::lock_guard writeLock(m_writeMutex);
         m_socket.store(INVALID_SOCKET);
         m_connected.store(false);
         ::shutdown(socket, SD_BOTH);

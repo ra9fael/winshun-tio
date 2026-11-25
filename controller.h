@@ -19,15 +19,18 @@
 #include "logic.h"
 #include "native.h"
 #include "snapshot.h"
+#include "qmlapp/ShareClient.h"
 
 #include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <algorithm>
+#include <utility>
 #include <vector>
 
 namespace tioplug {
@@ -94,12 +97,13 @@ public:
     {
         Notify notify;
         winshun::Json publish;
+        std::vector<std::shared_ptr<ShareClient>> staleTaps;
         {
             const std::lock_guard lock(m_mutex);
             m_backends = probeBackends();
             m_package = verifyPackage(m_pluginDir);
             m_packageVersion = m_package.packageVersion;
-            refreshPortsLocked();
+            refreshPortsLocked(staleTaps);
             applySettingsLocked();
             ensureTabLocked();
             refreshIdentityLocked();
@@ -107,6 +111,8 @@ public:
             m_publishPending = winshun::Json();
             notify = m_notify;
         }
+        for (const auto& tap : staleTaps)
+            tap->stop();
         writeHost(publish);
         if (notify)
             notify();
@@ -121,11 +127,14 @@ public:
     void refreshPorts()
     {
         Notify notify;
+        std::vector<std::shared_ptr<ShareClient>> staleTaps;
         {
             const std::lock_guard lock(m_mutex);
-            if (refreshPortsLocked())
+            if (refreshPortsLocked(staleTaps))
                 notify = m_notify;
         }
+        for (const auto& tap : staleTaps)
+            tap->stop();
         if (notify)
             notify();
     }
@@ -139,12 +148,13 @@ private:
     struct SessionTab {
         Form form;
         Session session;
+        std::shared_ptr<ShareClient> aiTap;
     };
 
     // Marks running sessions exited when their processes are gone. The creation
     // time is the identity, so a reused PID is never mistaken for ours. Returns
     // whether anything moved, so a caller knows there is something to repaint.
-    bool reconcileSessionsLocked()
+    bool reconcileSessionsLocked(std::vector<std::shared_ptr<ShareClient>>& staleTaps)
     {
         bool moved = false;
         for (SessionTab& tab : m_tabs) {
@@ -152,7 +162,11 @@ private:
                 continue;
             if (processAlive(tab.session.pid, tab.session.created))
                 continue;
-            moved = markExited(tab.session) || moved;
+            if (markExited(tab.session)) {
+                if (tab.aiTap)
+                    staleTaps.push_back(std::exchange(tab.aiTap, {}));
+                moved = true;
+            }
         }
         return moved;
     }
@@ -188,7 +202,7 @@ private:
     // The port half of refresh(): enumerate, notice sessions that left, re-read
     // the identity when the focused port's device changed. Returns whether a view
     // has anything new to draw.
-    bool refreshPortsLocked()
+    bool refreshPortsLocked(std::vector<std::shared_ptr<ShareClient>>& staleTaps)
     {
         std::vector<PortInfo> ports = enumeratePorts();
         ensureTabLocked();
@@ -197,7 +211,7 @@ private:
             && !sameDevice(findPort(m_ports, focusedCom), findPort(ports, focusedCom));
         const bool moved = !samePorts(m_ports, ports);
         m_ports = std::move(ports);
-        const bool sessionsMoved = reconcileSessionsLocked();
+        const bool sessionsMoved = reconcileSessionsLocked(staleTaps);
         if (deviceMoved)
             refreshIdentityLocked();
         return moved || sessionsMoved || deviceMoved;
@@ -298,6 +312,32 @@ public:
         out.defaultReadiness = defaultReadinessLocked();
         out.error = m_error;
         return out;
+    }
+
+    std::shared_ptr<ShareClient> sharedTap(int com, std::string& token, std::uint64_t& generation) const
+    {
+        const std::lock_guard lock(m_mutex);
+        const SessionTab* tab = tabForPortLocked(com);
+        if (!tab || !tab->session.active() || !tab->session.sharing || !tab->aiTap) {
+            token.clear();
+            generation = 0;
+            return {};
+        }
+        token = tab->session.token;
+        generation = tab->aiTap->generation();
+        return tab->aiTap;
+    }
+
+    bool writeShared(int com, const std::string& token, std::uint64_t generation,
+        const std::string& bytes)
+    {
+        const std::lock_guard lock(m_mutex);
+        const SessionTab* tab = tabForPortLocked(com);
+        if (!tab || !tab->session.active() || !tab->session.sharing
+            || tab->session.token != token || !tab->aiTap
+            || tab->aiTap->generation() != generation || !tab->aiTap->connected())
+            return false;
+        return tab->aiTap->write(bytes);
     }
 
     Form form() const
@@ -498,6 +538,12 @@ public:
                     ? "remote shared session failed to start: " + result.error : result.error;
             } else {
                 markRunning(tab->session, result.pid, result.created);
+                if (tab->session.sharing) {
+                    tab->aiTap = std::make_shared<ShareClient>();
+                    tab->aiTap->setReadOnly(false);
+                    if (!tab->aiTap->start("127.0.0.1", static_cast<std::uint16_t>(tab->session.sharePort)))
+                        tab->aiTap.reset();
+                }
                 started = true;
             }
             // The last error, so the window can show it: a failed launch has to
@@ -526,6 +572,7 @@ private:
     void stopMatching(Keep keep, bool hostShutdown = false)
     {
         std::vector<std::pair<DWORD, unsigned long long>> victims;
+        std::vector<std::shared_ptr<ShareClient>> taps;
         std::vector<std::size_t> indices;
         {
             const std::lock_guard lock(m_mutex);
@@ -535,9 +582,13 @@ private:
                 if (!keep(tab, i) || !tab.session.active() || !beginStop(tab.session))
                     continue;
                 victims.emplace_back(tab.session.pid, tab.session.created);
+                if (tab.aiTap)
+                    taps.push_back(std::exchange(tab.aiTap, {}));
                 indices.push_back(i);
             }
         }
+        for (const auto& tap : taps)
+            tap->stop();
         if (victims.empty())
             return;
         // Terminating can wait for the graceful timeout, so it runs unlocked.

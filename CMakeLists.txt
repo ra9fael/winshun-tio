@@ -31,7 +31,9 @@ find_package(Qt6 6.12.0 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2)
 # without it they land at :/<URI>, where the engine never looks.
 qt_policy(SET QTP0001 NEW)
 
-add_executable(tio qmlapp/stub/main.cpp tio.rc)
+add_executable(tio qmlapp/stub/main.cpp tio.rc
+  qmlapp/ShareClient.cpp qmlapp/ShareClient.h
+  qmlapp/AnsiText.cpp qmlapp/AnsiText.h)
 target_include_directories(tio PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 # setupapi/bcrypt/advapi32 are what --probe and --probe verify use; the stub
 # itself only needs kernel32.

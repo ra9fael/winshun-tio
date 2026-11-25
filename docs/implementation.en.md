@@ -45,6 +45,17 @@ WinShun                          tio.exe (protocol thread)
 - Every `query` re-reads the ports (`Controller::refreshPorts()`) and asks the host to ask again in a few seconds (`queryResult`, `rerun` 3 s): a resident plugin keeps running while devices are plugged and pulled, so the rows have to be the ports the machine has now. `m_browse` is kept while the words are unchanged — a rerun repeats the same query, and dropping the list then would snatch the baud rates away while they are being read.
 - `details()` returns the diagnostics text: the host's details pane can show the whole report without opening the window.
 
+### MCP serial I/O
+
+`tio-io` is the serial I/O command exposed through WinShun MCP. It shares the `Controller` with the search-box `tio` command, but it never creates a serial session:
+
+1. `status` lists only sessions the user started with sharing explicitly enabled, and returns the sharing port, session token and socket generation.
+2. `read COMn` reads from that session's `ShareClient` buffer by cursor, in `ascii` or `hex` format.
+3. `send COMn` returns only a send plan containing `bytesHex`, the token and the generation; MCP `_run` must call `sendSerial` with the same query and item id.
+4. `Controller::writeShared()` compares the COM number, token, generation and connection state again immediately before writing. A plan from a restarted session is rejected.
+
+`ShareClient` uses tio's `-S inet:<port>` socket and does not open a second serial driver. Writes use 64 KiB chunks and a 500 ms `SO_SNDTIMEO`, so a disconnected or non-reading peer cannot block the write forever.
+
 ## 3. Path B: the window
 
 ```

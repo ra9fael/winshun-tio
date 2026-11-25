@@ -18,8 +18,10 @@ The 0.2.1 round (the port list following the desk, one session no longer blockin
 | L2 | `python tests\integration.py` | **55 / 55 pass** | new: the answer carries `rerun`, asking again answers the same rows, and the rows' port set equals what `tio.exe --probe ports` enumerates at that moment |
 | L2+ | `python tests\integration.py --launch` | **67 / 67 pass** | two real sessions on two devices at once: COM8 running leaves COM10's row launchable, COM10 starts while COM8 runs, both rows say Stop, stopping one leaves the other running; then Stop → Launch on the first |
 | L2' | `python tests\window_check.py` | **28 / 28 pass** | zh/en × light/dark + the host's four styles, no QML warnings |
-| Packaging | `python tools\package.py --dev` | pass | `dist\development\ra9fael.tio-0.2.1.wsplugin`, sha256 `4c8b0aac84c6c184c45c541b9d205c37d7d69c8eaa49f2f054531e67c41bc41e` |
+| Packaging | `python tools\package.py --dev` | pass | `dist\development\ra9fael.tio-0.2.1.wsplugin`, sha256 `87e177038378b67623df9cd4d0bd7c94eee950ff138e12d6ec515c67b53cb661` |
 | Install | `ws plugin install` | pass | 0.2.0 → 0.2.1, enabled |
+| Live MCP path | WinShun's default MCP pipe | **pass** | `tools/list` exposed `plugin_ra9fael_tio_tio_io` and `_run`; a real shared `COM10:54321` completed status, read, send, loopback and stale-token rejection after restart |
+| MCP write timeout | `ctest --test-dir build\msvc -C Release -R ^tio_share_client$` | **30 / 30 pass** | A write to a non-reading peer failed after 512 ms; a write to a disconnected peer failed after 402 ms; shared-socket writes use 64 KiB chunks and 500 ms `SO_SNDTIMEO` |
 | Device plug and unplug | observation script, three windows totalling 25 minutes | **not measured** | the port set stayed `COM8, COM10, COM11` throughout (a later process started on `COM8` alone and never changed). What the change rests on: every answer re-reads the ports, `samePorts` decides whether anything moved, and `testPortIsolation` asserts that a port missing from the enumeration has no row. The physical unplug is left to do with the device at hand |
 
 The 0.2.0 round (the configuration-ownership rework):

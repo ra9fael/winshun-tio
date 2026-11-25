@@ -132,6 +132,25 @@ class Plugin:
         )
         return answer_items(answer)
 
+    def query_command(self, command: str, text: str, request_id: int) -> list[dict]:
+        answer = self.call(
+            "query",
+            {"queryId": request_id, "command": command, "trigger": "keyword",
+             "text": text, "raw": text, "source": "command", "limit": 200},
+            request_id,
+        )
+        return answer_items(answer)
+
+    def command_action(self, command: str, action_id: str, item: dict,
+                       request_id: int) -> list[dict]:
+        answer = self.call(
+            "action",
+            {"command": command, "action": action_id, "text": "",
+             "item": item, "trigger": "keyword", "files": []},
+            request_id,
+        )
+        return (answer.get("result") or {}).get("effects") or []
+
     def action(self, action_id: str, item: dict | None = None, request_id: int = 10) -> list[dict]:
         answer = self.call(
             "action",
@@ -212,6 +231,25 @@ def main() -> int:
             init = plugin.initialize()
             check(init.get("result", {}).get("protocolVersion") == "1", "initialize answers protocol 1")
             check(init.get("result", {}).get("name") == "ra9fael.tio", "initialize reports the plugin id")
+
+            # AI serial I/O is limited to sessions the user shared from the
+            # standalone window. Valid COM names alone must not open or probe a
+            # serial device, and send is a query plan rather than a write.
+            for offset, com in enumerate(("COM9", "COM10"), 0):
+                status = plugin.query_command("tio-io", "status", 80 + offset)
+                check(any("No user-shared session" in (item.get("title") or "")
+                          for item in status),
+                      f"tio-io status reports no shared session for {com}")
+                read = plugin.query_command("tio-io", f"read {com} --format hex --from 0 --max 16",
+                                            90 + offset)
+                check(any("not a user-shared session" in (item.get("title") or "")
+                          for item in read),
+                      f"tio-io read refuses unshared {com}")
+                send = plugin.query_command("tio-io", f"send {com} --format ascii --data AT\\r\\n",
+                                            100 + offset)
+                check(any("not a user-shared session" in (item.get("title") or "")
+                          for item in send),
+                      f"tio-io send refuses unshared {com}")
 
             # ---- path A: the grouped answer ----
             items = plugin.query()

@@ -18,8 +18,10 @@
 | L2 | `python tests\integration.py` | **55 / 55 通过** | 新增：回答带 `rerun`、重问同一条查询答案不变、行里的端口集合等于 `tio.exe --probe ports` 此刻枚举到的端口 |
 | L2+ | `python tests\integration.py --launch` | **67 / 67 通过** | 两个设备上同时跑两个真会话：COM8 运行中 COM10 那行仍可启动、COM10 起来后两行都是停止、停掉 COM10 不影响 COM8；随后 COM8 停止 → 回到启动行 |
 | L2' | `python tests\window_check.py` | **28 / 28 通过** | zh/en × light/dark + 宿主四种风格，无 QML 警告 |
-| 打包 | `python tools\package.py --dev` | 通过 | `dist\development\ra9fael.tio-0.2.1.wsplugin`，sha256 `4c8b0aac84c6c184c45c541b9d205c37d7d69c8eaa49f2f054531e67c41bc41e` |
+| 打包 | `python tools\package.py --dev` | 通过 | `dist\development\ra9fael.tio-0.2.1.wsplugin`，sha256 `87e177038378b67623df9cd4d0bd7c94eee950ff138e12d6ec515c67b53cb661` |
 | 安装 | `ws plugin install` | 通过 | 0.2.0 → 0.2.1，已启用 |
+| MCP 实链路 | WinShun 默认 MCP 管道 | **通过** | `tools/list` 暴露 `plugin_ra9fael_tio_tio_io` 与 `_run`；真实共享 `COM10:54321` 完成 status、read、send、回环和重启后旧 token 拒绝 |
+| MCP 写入超时 | `ctest --test-dir build\msvc -C Release -R ^tio_share_client$` | **30 / 30 通过** | 不读取 peer 的写入在 512 ms 失败，断线 peer 的写入在 402 ms 失败；共享 socket 使用 64 KiB 分块和 500 ms `SO_SNDTIMEO` |
 | 插拔随动 | 观察脚本，三次窗口共 25 分钟 | **未实测** | 窗口内端口集合一直是 `COM8, COM10, COM11`（后一次进程从 `COM8` 起，期间没有变化）。改动本身的证据是：每次回答都重读、`samePorts` 判变化、`testPortIsolation` 断言「枚举里没有的端口不出行」；真实拔插待设备在手边时补做 |
 
 0.2.0 轮（配置所有权改造）的记录：

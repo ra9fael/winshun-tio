@@ -2,7 +2,7 @@
 
 用装在插件包里的 [tio](https://github.com/tio/tio) 打开串口终端。**搜索框里选端口、按 Enter 启动**，全部参数、远程共享与默认配置在独立窗口里。
 
-当前版本：**v0.2.0**。
+当前版本：**v0.2.1**。
 
 ## 在线交互演示（不用安装）
 
@@ -16,6 +16,18 @@
 说明：这是**界面模拟稿**，数据是写死的真实设备样例（COM8/COM9），不连接串口、不代表运行中的插件；窗口本体的行为以安装后的插件为准。
 
 > **远程共享是显式的双向控制，不是只读日志。** **默认开启**，端口默认 TCP `54321`，可在插件设置或独立窗口改为 `1024–65535`；tio 在所有网卡监听。局域网客户端可以读取串口数据，也可以向设备写入任意字节。WT 与远程客户端共享同一会话；只在可信网络中启用。独立窗口自己也会连到 `127.0.0.1:<端口>`，只收不发地显示本次共享收到的串口内容（最近 128 KB）。搜索框启动不会开启共享。
+
+## WinShun MCP 串口读写
+
+插件支持通过 WinShun MCP 让 AI 读取和写入串口。MCP 只访问**用户在独立窗口中启动并明确开启共享的会话**；它不会自动打开串口、启动 tio 或打开共享。
+
+可用操作：
+
+- `status`：查看当前用户共享的会话、共享端口和连接状态
+- `read COMn --format hex|ascii --from CURSOR --max BYTES`：按游标读取串口数据
+- `send COMn --format hex|ascii --data VALUE`：生成发送计划；随后由 MCP `_run` 执行 `sendSerial`
+
+发送时会重新校验共享会话的 session token 和 socket generation。会话被停止或重启后，旧的发送计划会失效，必须重新查询并生成计划。搜索框直接启动的会话不会启用共享，因此不会被 MCP 访问。
 
 ## 窗口截图
 
@@ -100,6 +112,7 @@
 | [第三方组件](THIRD_PARTY.md) | 逐文件来源、许可证与「为什么需要」 | [Third party](THIRD_PARTY.en.md) |
 | [实现笔记](docs/implementation.md) | 代码结构、两条路径、构建与验证 | [Implementation](docs/implementation.en.md) |
 | [验证记录](docs/validation.md) | 跑过什么、结果如何、什么还没跑 | [Validation](docs/validation.en.md) |
+| [MCP 验证](docs/validation/mcp-tio/README.md) | WinShun MCP 实链路、串口回环与会话身份校验 | [MCP validation](docs/validation/mcp-tio/README.md) |
 
 ## 构建
 

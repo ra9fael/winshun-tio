@@ -34,6 +34,7 @@
     "encoding": "utf-8"
   },
   "settingsWindow": true,
+  "ai": { "expose": true },
   "commands": [
     {
       "id": "tio",
@@ -70,7 +71,42 @@
         }
       ],
       "ai": {
-      "description": "Configure and launch the bundled tio serial terminal. One launch row per port names the COMn and its /dev/ttyS(n-1) mapping; Enter starts tio after six pre-launch checks and Enter again stops the session this plugin started. A baud-rate row offers the common rates, and a row showing the whole configuration (serial parameters and the resolved backend) opens the standalone window, where data bits, parity, stop bits, flow control, remote sharing, the shared port and the defaults live. The backend preference (auto, Windows Terminal or conhost) is on the plugin's settings card in WinShun. The standalone window can explicitly confirm bidirectional remote serial sharing on TCP 54321; remote clients can write to the device."
+        "description": "Configure and launch the bundled tio serial terminal. One launch row per port names the COMn and its /dev/ttyS(n-1) mapping; Enter starts tio after six pre-launch checks and Enter again stops the session this plugin started. A baud-rate row offers the common rates, and a row showing the whole configuration (serial parameters and the resolved backend) opens the standalone window, where data bits, parity, stop bits, flow control, remote sharing, the shared port and the defaults live. The backend preference (auto, Windows Terminal or conhost) is on the plugin's settings card in WinShun. The standalone window can explicitly confirm bidirectional remote serial sharing on TCP 54321; remote clients can write to the device."
+      }
+    },
+    {
+      "id": "tio-io",
+      "title": {
+        "zh": "AI 串口读写",
+        "en": "AI serial I/O"
+      },
+      "hint": {
+        "zh": "通过 WinShun MCP 读写用户已开启共享的会话",
+        "en": "Read and write user-shared sessions through WinShun MCP"
+      },
+      "actions": [
+        {
+          "id": "sendSerial",
+          "title": {
+            "zh": "发送串口数据",
+            "en": "Send serial data"
+          },
+          "key": ""
+        }
+      ],
+      "ai": {
+        "description": "WinShun MCP command for reading status or serial bytes from, and sending bytes to, a session that the user started in the standalone window with sharing explicitly enabled. This command never opens a port or enables sharing. Use status, read COMn --format hex|ascii --from CURSOR --max BYTES, or send COMn --format hex|ascii --data VALUE. Send rows are plans; the _run tool must be called with the same query and item id, and the session and socket generation are checked again before writing.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "status, read COMn, or send COMn with format and data options"
+            }
+          },
+          "required": ["query"],
+          "additionalProperties": false
+        }
       }
     }
   ],

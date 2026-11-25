@@ -2,7 +2,7 @@
 
 Opens a serial terminal with [tio](https://github.com/tio/tio) bundled inside the plugin package. **Pick the port in the search box and press Enter to start**; every parameter, remote sharing and the defaults live in the standalone window.
 
-Current version: **v0.2.0**.
+Current version: **v0.2.1**.
 
 ## Interactive online demo (no install)
 
@@ -16,6 +16,18 @@ If Pages is not live yet, a zero-setup preview also works:
 Note: this is a **UI mockup** with hard-coded sample devices (COM8/COM9). It opens no serial port and does not represent the running plugin; the installed plugin is the authority on behaviour.
 
 > **Remote sharing is explicit bidirectional control, not a read-only log.** **It is on by default.** The port defaults to TCP `54321` and can be set to `1024-65535` in the plugin settings or the standalone window; tio listens on all interfaces. LAN clients can read serial data and write arbitrary bytes to the device. WT and remote clients share one session; enable only on a trusted network. The window also connects to `127.0.0.1:<port>` as a read-only consumer and shows what this shared session receives (last 128 KB). Search-box launches never enable sharing.
+
+## WinShun MCP serial I/O
+
+The plugin supports reading and writing serial data through WinShun MCP. MCP only accesses a **session that the user started in the standalone window with sharing explicitly enabled**; it never opens a serial port, starts tio, or enables sharing automatically.
+
+Available operations:
+
+- `status`: show user-shared sessions, their sharing ports and connection state
+- `read COMn --format hex|ascii --from CURSOR --max BYTES`: read serial bytes by cursor
+- `send COMn --format hex|ascii --data VALUE`: create a send plan; MCP `_run` then executes `sendSerial`
+
+Before sending, the plugin revalidates the shared session token and socket generation. After a session is stopped or restarted, an old send plan is invalid and a new plan must be queried. Sessions launched directly from the search box do not enable sharing and are therefore unavailable to MCP.
 
 ## Window screenshot
 
@@ -100,6 +112,7 @@ The pinned tio 3.9 has **no** command-line option for DTR/RTS (checked against `
 | [Third party](THIRD_PARTY.en.md) | per-file source, licence and "why it is needed" | [第三方组件](THIRD_PARTY.md) |
 | [Implementation](docs/implementation.en.md) | code structure, both paths, building and checks | [实现笔记](docs/implementation.md) |
 | [Validation](docs/validation.en.md) | what was run, what it showed, what has not run | [验证记录](docs/validation.md) |
+| [MCP validation](docs/validation/mcp-tio/README.md) | the deployed WinShun MCP path, serial loopback and session identity checks | [MCP 验证](docs/validation/mcp-tio/README.md) |
 
 ## Building
 

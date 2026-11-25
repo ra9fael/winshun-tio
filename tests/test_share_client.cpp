@@ -8,6 +8,7 @@
 #include <winsock2.h>
 
 #include <cstdio>
+#include <cstdint>
 #include <string>
 #include <thread>
 #include <chrono>
@@ -91,6 +92,73 @@ private:
     std::uint16_t m_port = 0;
 };
 
+// A peer that accepts the shared client but never reads from it. This makes the
+// client's blocking send reach SO_SNDTIMEO instead of completing immediately.
+class StalledShareServer {
+public:
+    bool start()
+    {
+        WSADATA data{};
+        if (::WSAStartup(MAKEWORD(2, 2), &data) != 0)
+            return false;
+        m_wsaReady = true;
+        m_listener = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (m_listener == INVALID_SOCKET)
+            return false;
+        const int receiveBuffer = 1024;
+        ::setsockopt(m_listener, SOL_SOCKET, SO_RCVBUF,
+            reinterpret_cast<const char*>(&receiveBuffer), sizeof receiveBuffer);
+        sockaddr_in address{};
+        address.sin_family = AF_INET;
+        address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        address.sin_port = 0;
+        if (::bind(m_listener, reinterpret_cast<sockaddr*>(&address), sizeof address) == SOCKET_ERROR)
+            return false;
+        int length = sizeof address;
+        ::getsockname(m_listener, reinterpret_cast<sockaddr*>(&address), &length);
+        m_port = ntohs(address.sin_port);
+        return ::listen(m_listener, 1) != SOCKET_ERROR;
+    }
+
+    bool acceptClient()
+    {
+        m_client = ::accept(m_listener, nullptr, nullptr);
+        return m_client != INVALID_SOCKET;
+    }
+
+    void closeClient()
+    {
+        if (m_client != INVALID_SOCKET) {
+            ::shutdown(m_client, SD_BOTH);
+            ::closesocket(m_client);
+            m_client = INVALID_SOCKET;
+        }
+    }
+
+    void stop()
+    {
+        closeClient();
+        if (m_listener != INVALID_SOCKET) {
+            ::closesocket(m_listener);
+            m_listener = INVALID_SOCKET;
+        }
+        if (m_wsaReady) {
+            ::WSACleanup();
+            m_wsaReady = false;
+        }
+    }
+
+    std::uint16_t port() const { return m_port; }
+
+    ~StalledShareServer() { stop(); }
+
+private:
+    SOCKET m_listener = INVALID_SOCKET;
+    SOCKET m_client = INVALID_SOCKET;
+    std::uint16_t m_port = 0;
+    bool m_wsaReady = false;
+};
+
 } // namespace
 
 int main()
@@ -121,6 +189,7 @@ int main()
     report(echoed.empty(), "the window never sends a byte back", echoed);
     report(client.connected() || tail == payload, "the client reports its connection");
     report(client.port() == server.port(), "the client names the port it consumed");
+    report(client.generation() > 0, "the client has a stream generation");
 
     // The incremental path, which the auto-log and the view both use: consume()
     // hands each byte over once, and a second call with no new traffic is empty.
@@ -160,6 +229,62 @@ int main()
 
     client.stop();
     server.stop();
+
+    // A blocked peer must not leave the MCP write path stuck forever. The
+    // payload is larger than the loopback receive window, so send() reaches
+    // ShareClient's 500 ms SO_SNDTIMEO while the server deliberately does not
+    // consume any bytes.
+    StalledShareServer stalled;
+    report(stalled.start(), "the stalled peer starts on loopback");
+    if (stalled.port() == 0)
+        return 1;
+    tioplug::ShareClient writer;
+    writer.setReadOnly(false);
+    report(writer.start("127.0.0.1", stalled.port()), "the writable consumer starts");
+    report(stalled.acceptClient(), "the stalled peer accepts the consumer");
+    bool connected = false;
+    for (int i = 0; i < 40 && !connected; ++i) {
+        connected = writer.connected();
+        if (!connected)
+            std::this_thread::sleep_for(25ms);
+    }
+    report(connected, "the writable consumer reports its connection");
+
+    const std::string blockedPayload(128u * 1024u * 1024u, 'X');
+    const auto sendStarted = std::chrono::steady_clock::now();
+    const bool blockedWrite = writer.write(blockedPayload);
+    const auto sendElapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - sendStarted).count();
+    std::printf("stalled write elapsed %lld ms\n", static_cast<long long>(sendElapsed));
+    report(!blockedWrite, "a non-reading peer makes the write fail");
+    report(sendElapsed >= 300 && sendElapsed < 3000, "the write timeout is bounded",
+        std::to_string(sendElapsed) + " ms");
+    writer.stop();
+    stalled.stop();
+
+    // A disconnected peer should fail the next write without waiting for the
+    // timeout. Stop the listener as well so the client cannot reconnect.
+    StalledShareServer disconnected;
+    report(disconnected.start(), "the disconnect peer starts on loopback");
+    if (disconnected.port() == 0)
+        return 1;
+    tioplug::ShareClient disconnectedClient;
+    disconnectedClient.setReadOnly(false);
+    report(disconnectedClient.start("127.0.0.1", disconnected.port()), "the disconnect consumer starts");
+    report(disconnected.acceptClient(), "the disconnect peer accepts the consumer");
+    disconnected.closeClient();
+    disconnected.stop();
+    for (int i = 0; i < 40 && disconnectedClient.connected(); ++i)
+        std::this_thread::sleep_for(25ms);
+    const auto disconnectStarted = std::chrono::steady_clock::now();
+    const bool disconnectedWrite = disconnectedClient.write("after-disconnect");
+    const auto disconnectElapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - disconnectStarted).count();
+    std::printf("disconnected write elapsed %lld ms\n", static_cast<long long>(disconnectElapsed));
+    report(!disconnectedWrite, "a disconnected peer rejects the write");
+    report(disconnectElapsed < 500, "a disconnected write returns within the send timeout",
+        std::to_string(disconnectElapsed) + " ms");
+    disconnectedClient.stop();
 
     std::printf("%s %d share-client checks, %d failed\n",
         g_failed ? "FAILED" : "PASS", g_total, g_failed);

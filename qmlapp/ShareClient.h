@@ -37,6 +37,7 @@ public:
     bool running() const { return m_running.load(); }
     bool connected() const { return m_connected.load(); }
     std::uint16_t port() const { return m_port.load(); }
+    std::uint64_t generation() const { return m_generation.load(); }
     bool readOnly() const { return m_readOnly.load(); }
 
     // Whether received bytes are only read (default) or may be written back to
@@ -55,6 +56,8 @@ public:
     // still held. This is what the log writer and the views consume, so nothing
     // is written twice.
     std::string consume(std::uint64_t& cursor) const;
+    std::string read(std::uint64_t& cursor, std::size_t maxBytes, bool& overrun) const;
+    std::uint64_t oldestBytes() const;
     std::uint64_t totalBytes() const { return m_total.load(); }
     // The terminal screen reduced from those bytes, copied under the lock so a
     // repaint never reads a line the thread is still writing.
@@ -75,6 +78,7 @@ private:
     std::atomic<bool> m_connected{false};
     std::atomic<bool> m_readOnly{true};
     std::atomic<std::uint16_t> m_port{0};
+    std::atomic<std::uint64_t> m_generation{0};
     std::atomic<std::uint64_t> m_revision{0};
     // Absolute offset of m_buffer.front() from the first byte of the session.
     std::uint64_t m_bufferStart = 0;

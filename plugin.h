@@ -13,6 +13,8 @@
 #include "rows_build.h"
 #include "window_hook.h"
 
+#include <cctype>
+#include <cstdlib>
 #include <optional>
 #include <string>
 #include <vector>
@@ -83,6 +85,8 @@ protected:
 
     winshun::Items query(const winshun::Query& q) override
     {
+        if (q.command == "tio-io")
+            return ioQuery(q.text);
         if (q.command != "tio")
             return {};
 
@@ -94,10 +98,11 @@ protected:
         // A candidate list stays until the words change. The host asks the same
         // query again for a rerun, and that is not the user typing: dropping the
         // list then would snatch the baud rates away while they are being read.
-        if (q.raw != m_answeredRaw)
+        if (q.source != "command" && q.raw != m_answeredRaw)
             m_browse = Browse::None;
-        m_answeredRaw = q.raw;
-        return items(rows());
+        if (q.source != "command")
+            m_answeredRaw = q.raw;
+        return items(rows(q.source == "command" ? Browse::None : m_browse));
     }
 
     // The rows are live: while they are shown the host asks again every few
@@ -113,6 +118,8 @@ protected:
 
     winshun::Effects action(const winshun::ActionRequest& request) override
     {
+        if (request.command == "tio-io")
+            return ioAction(request);
         if (request.command != "tio")
             return {notify(L"不支持的操作", "Unsupported action")};
 
@@ -225,12 +232,287 @@ protected:
     }
 
 private:
+    static std::vector<std::string> tokens(const std::string& text)
+    {
+        std::vector<std::string> out;
+        std::string current;
+        bool quoted = false;
+        for (std::size_t i = 0; i < text.size(); ++i) {
+            const char c = text[i];
+            if (quoted && c == '\\' && i + 1 < text.size()) {
+                current.push_back(c);
+                current.push_back(text[++i]);
+                continue;
+            }
+            if (c == '"') {
+                quoted = !quoted;
+            } else if (std::isspace(static_cast<unsigned char>(c)) && !quoted) {
+                if (!current.empty()) {
+                    out.push_back(std::move(current));
+                    current.clear();
+                }
+            } else {
+                current.push_back(c);
+            }
+        }
+        if (!current.empty())
+            out.push_back(std::move(current));
+        return out;
+    }
+
+    static bool hexDigit(char c, unsigned& value)
+    {
+        if (c >= '0' && c <= '9') value = static_cast<unsigned>(c - '0');
+        else if (c >= 'a' && c <= 'f') value = static_cast<unsigned>(c - 'a' + 10);
+        else if (c >= 'A' && c <= 'F') value = static_cast<unsigned>(c - 'A' + 10);
+        else return false;
+        return true;
+    }
+
+    static bool decodeHex(const std::string& input, std::string& out)
+    {
+        std::string digits;
+        for (std::size_t i = 0; i < input.size(); ++i) {
+            if (std::isspace(static_cast<unsigned char>(input[i])))
+                continue;
+            if (input[i] == '0' && i + 1 < input.size() && (input[i + 1] == 'x' || input[i + 1] == 'X')) {
+                ++i;
+                continue;
+            }
+            digits.push_back(input[i]);
+        }
+        if (digits.empty() || digits.size() % 2 != 0 || digits.size() / 2 > 4096)
+            return false;
+        out.clear();
+        out.reserve(digits.size() / 2);
+        for (std::size_t i = 0; i < digits.size(); i += 2) {
+            unsigned high = 0, low = 0;
+            if (!hexDigit(digits[i], high) || !hexDigit(digits[i + 1], low))
+                return false;
+            out.push_back(static_cast<char>((high << 4) | low));
+        }
+        return true;
+    }
+
+    static bool decodeAscii(const std::string& input, std::string& out)
+    {
+        out.clear();
+        for (std::size_t i = 0; i < input.size(); ++i) {
+            if (input[i] != '\\') {
+                out.push_back(input[i]);
+                continue;
+            }
+            if (++i >= input.size())
+                return false;
+            const char c = input[i];
+            if (c == 'r') out.push_back('\r');
+            else if (c == 'n') out.push_back('\n');
+            else if (c == 't') out.push_back('\t');
+            else if (c == '0') out.push_back('\0');
+            else if (c == '\\' || c == '"') out.push_back(c);
+            else if (c == 'x' && i + 2 < input.size()) {
+                unsigned high = 0, low = 0;
+                if (!hexDigit(input[i + 1], high) || !hexDigit(input[i + 2], low))
+                    return false;
+                out.push_back(static_cast<char>((high << 4) | low));
+                i += 2;
+            } else {
+                return false;
+            }
+        }
+        return !out.empty() && out.size() <= 4096;
+    }
+
+    static bool number(const std::string& text, std::uint64_t& value)
+    {
+        if (text.empty())
+            return false;
+        char* end = nullptr;
+        const unsigned long long parsed = std::strtoull(text.c_str(), &end, 10);
+        if (!end || *end != '\0')
+            return false;
+        value = parsed;
+        return true;
+    }
+
+    static winshun::Item errorItem(const std::string& text)
+    {
+        winshun::Item item("error", text);
+        item.invalid();
+        return item;
+    }
+
+    winshun::Items ioQuery(const std::string& text) const
+    {
+        const std::vector<std::string> args = tokens(text);
+        if (args.empty())
+            return {errorItem("Use status, read COMn, or send COMn")};
+        if (args[0] == "status")
+            return ioStatus();
+        if (args[0] != "read" && args[0] != "send")
+            return {errorItem("Use status, read COMn, or send COMn")};
+        if (args.size() < 2)
+            return {errorItem("A COM port is required")};
+        const Port port = parsePort(args[1]);
+        if (!port.ok())
+            return {errorItem("Invalid COM port")};
+
+        std::string format = "ascii";
+        std::string data;
+        std::uint64_t from = 0;
+        std::uint64_t max = 2048;
+        bool haveFrom = false;
+        bool haveData = false;
+        bool haveTail = false;
+        std::string requestedToken;
+        bool dataOption = false;
+        for (std::size_t i = 2; i < args.size(); ++i) {
+            if (dataOption) {
+                if (args[i].rfind("--", 0) == 0) {
+                    dataOption = false;
+                    --i;
+                    continue;
+                }
+                if (!data.empty()) data.push_back(' ');
+                data += args[i];
+                continue;
+            }
+            if (args[i] == "--format" && i + 1 < args.size()) format = args[++i];
+            else if (args[i] == "--data" && i + 1 < args.size()) { data = args[++i]; haveData = true; dataOption = true; }
+            else if (args[i] == "--from" && i + 1 < args.size()) { haveFrom = number(args[++i], from); if (!haveFrom) return {errorItem("Invalid cursor")}; }
+            else if (args[i] == "--tail" && i + 1 < args.size()) { if (!number(args[++i], max)) return {errorItem("Invalid tail")}; haveTail = true; }
+            else if (args[i] == "--max" && i + 1 < args.size()) { if (!number(args[++i], max)) return {errorItem("Invalid max")}; }
+            else if (args[i] == "--session" && i + 1 < args.size()) { requestedToken = args[++i]; }
+            else return {errorItem("Unknown option")};
+        }
+        std::string token;
+        std::uint64_t generation = 0;
+        const std::shared_ptr<ShareClient> tap = core().controller().sharedTap(port.com, token, generation);
+        if (!tap)
+            return {errorItem("COM" + std::to_string(port.com) + " is not a user-shared session")};
+        if (!requestedToken.empty() && requestedToken != token)
+            return {errorItem("The requested session is no longer active")};
+        if (args[0] == "send") {
+            if (!tap->connected())
+                return {errorItem("The shared socket is not connected")};
+            if (!haveData)
+                return {errorItem("--data is required")};
+            std::string bytes;
+            const bool decoded = format == "hex" ? decodeHex(data, bytes) : format == "ascii" ? decodeAscii(data, bytes) : false;
+            if (!decoded)
+                return {errorItem("Invalid data or format")};
+            winshun::Item item("send:" + std::to_string(port.com), "Send " + std::to_string(bytes.size()) + " bytes to COM" + std::to_string(port.com));
+            item.subtitle = format + " generation=" + std::to_string(generation);
+            item.withActions({{"sendSerial", "Send", "Enter"}});
+            item.withData(winshun::Json::Object {{"com", port.com}, {"token", token}, {"generation", static_cast<unsigned long long>(generation)}, {"bytesHex", hexDump(bytes)}});
+            return {std::move(item)};
+        }
+        if (format != "hex" && format != "ascii")
+            return {errorItem("Format must be hex or ascii")};
+        if (max == 0 || max > 4096)
+            return {errorItem("max must be between 1 and 4096")};
+        std::uint64_t cursor = haveFrom ? from : tap->oldestBytes();
+        if (haveTail) {
+            const std::uint64_t end = tap->totalBytes();
+            cursor = end > max ? end - max : tap->oldestBytes();
+        }
+        bool overrun = false;
+        const std::uint64_t requested = cursor;
+        const std::string payload = tap->read(cursor, static_cast<std::size_t>(max), overrun);
+        winshun::Item item("read:" + std::to_string(port.com), format == "hex" ? "Read bytes from COM" + std::to_string(port.com) : "Read text from COM" + std::to_string(port.com));
+        item.invalid();
+        item.subtitle = format + " generation=" + std::to_string(generation) + " cursor=" + std::to_string(cursor)
+            + (overrun ? " data lost before cursor " + std::to_string(requested) : "");
+        item.withCopy(format == "hex" ? hexDump(payload) : asciiDump(payload));
+        item.withData(winshun::Json::Object {{"com", port.com}, {"token", token}, {"generation", static_cast<unsigned long long>(generation)}, {"cursor", static_cast<unsigned long long>(cursor)}});
+        return {std::move(item)};
+    }
+
+    winshun::Items ioStatus() const
+    {
+        winshun::Items out;
+        const Snapshot snapshot = core().controller().snapshot();
+        for (const SessionView& view : snapshot.sessions) {
+            if (!view.session.active() || !view.session.sharing)
+                continue;
+            std::string token;
+            std::uint64_t generation = 0;
+            const auto tap = core().controller().sharedTap(view.session.com, token, generation);
+            winshun::Item item("status:" + std::to_string(view.session.com), "COM" + std::to_string(view.session.com));
+            item.invalid();
+            item.subtitle = std::string(tap && tap->connected() ? "connected" : "connecting") + " port=" + std::to_string(view.session.sharePort);
+            item.withCopy(winshun::Json(winshun::Json::Object {{"com", view.session.com}, {"shared", true},
+                {"connected", tap && tap->connected()}, {"session", token},
+                {"generation", static_cast<unsigned long long>(generation)},
+                {"cursor", static_cast<unsigned long long>(tap ? tap->totalBytes() : 0)}}).dump());
+            out.push_back(std::move(item));
+        }
+        if (out.empty())
+            out.push_back(errorItem("No user-shared session is running"));
+        return out;
+    }
+
+    winshun::Effects ioAction(const winshun::ActionRequest& request)
+    {
+        if (request.action != "sendSerial")
+            return {winshun::effect::notify("Unsupported serial I/O action")};
+        const winshun::Json& data = request.item["data"];
+        if (!data.isObject() || !data.has("com") || !data.has("token") || !data.has("generation") || !data.has("bytesHex"))
+            return {winshun::effect::notify("The send request is incomplete")};
+        const int com = static_cast<int>(data["com"].toInt());
+        const std::string expectedToken = data["token"].toString();
+        const std::uint64_t expectedGeneration = static_cast<std::uint64_t>(data["generation"].toNumber());
+        std::string bytes;
+        if (!decodeHex(data["bytesHex"].toString(), bytes))
+            return {winshun::effect::notify("The send bytes are invalid")};
+        return core().controller().writeShared(com, expectedToken, expectedGeneration, bytes)
+            ? winshun::Effects {}
+            : winshun::Effects {winshun::effect::notify("The shared session changed or did not accept the bytes")};
+    }
+
+    static std::string hexDump(const std::string& bytes)
+    {
+        static const char* digits = "0123456789abcdef";
+        std::string out;
+        for (unsigned char c : bytes) {
+            if (!out.empty()) out.push_back(' ');
+            out.push_back(digits[c >> 4]);
+            out.push_back(digits[c & 15]);
+        }
+        return out;
+    }
+
+    static std::string asciiDump(const std::string& bytes)
+    {
+        std::string out;
+        for (unsigned char c : bytes) {
+            switch (c) {
+            case '\r': out += "\\r"; break;
+            case '\n': out += "\\n\n"; break;
+            case '\t': out += "\\t"; break;
+            case '\0': out += "\\0"; break;
+            default:
+                if (c >= 0x20 && c <= 0x7e)
+                    out.push_back(static_cast<char>(c));
+                else {
+                    static const char* digits = "0123456789abcdef";
+                    out += "\\x";
+                    out.push_back(digits[c >> 4]);
+                    out.push_back(digits[c & 15]);
+                }
+            }
+        }
+        return out;
+    }
+
     bool chinese() const { return locale() != "en"; }
 
-    std::vector<Row> rows() const
+    std::vector<Row> rows(Browse browse) const
     {
-        return buildRows(core().controller().snapshot(), m_browse, makeLang(chinese()));
+        return buildRows(core().controller().snapshot(), browse, makeLang(chinese()));
     }
+
+    std::vector<Row> rows() const { return rows(m_browse); }
 
     // Row -> the host's item type. Kept here so rows.h has no SDK dependency.
     static winshun::Items items(const std::vector<Row>& rows)
